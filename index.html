@@ -568,14 +568,39 @@ function useDriveSync(dataRef, applyRemoteData) {
 
 function normalizeData(d) {
   const n = d || {};
+  const rawLineItems = n.lineItems || [];
+  const rawAssignments = n.assignments || [];
+  // One-time migration: fold legacy "assignments" (personnel <-> project links)
+  // into lineItems as group="Nhân sự" rows carrying personnelId, so personnel
+  // cost tracking lives in one place. Idempotent: once migrated, assignments
+  // is cleared, so this is a no-op on subsequent loads.
+  const migratedLineItems = rawAssignments.length > 0
+    ? [
+        ...rawLineItems,
+        ...rawAssignments.map((a) => ({
+          id: uid(),
+          projectId: a.projectId,
+          group: "Nhân sự",
+          name: a.roleInProject || "Nhân sự",
+          personnelId: a.personnelId,
+          quantity: 1,
+          unitPrice: a.fee || 0,
+          contractValue: a.fee || 0,
+          extraAmount: 0,
+          actualValue: a.fee || 0,
+          paidAmount: a.paidAmount || 0,
+          notes: "",
+        })),
+      ]
+    : rawLineItems;
   return {
     projects: n.projects || [],
     contracts: n.contracts || [],
     milestones: n.milestones || [],
     personnel: n.personnel || [],
-    assignments: n.assignments || [],
+    assignments: [],
     transactions: n.transactions || [],
-    lineItems: n.lineItems || [],
+    lineItems: migratedLineItems,
     catalog: ensureCatalogDefaults(n.catalog || []),
     timelineCatalog: n.timelineCatalog || buildDefaultTimelineCatalog(),
     _meta: n._meta || { updatedAt: new Date().toISOString() },
@@ -736,7 +761,7 @@ function Field({ label, children }) {
 
 /* ------------------------------- form: project ------------------------------ */
 
-function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineCatalogItem, catalog, onAddCatalogItem }) {
+function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineCatalogItem, catalog, onAddCatalogItem, personnel, onQuickAddPersonnel }) {
   const [f, setF] = useState(
     initial || { name: "", client: "", director: "", status: "Chưa bắt đầu", progress: 0, startDate: todayISO(), endDate: "", budget: "", description: "" }
   );
@@ -908,6 +933,8 @@ function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineC
               initial={editingLocalLineItem}
               onClose={() => { setShowLocalLineItemForm(false); setEditingLocalLineItem(null); }}
               onSave={saveLocalLineItem}
+              personnel={personnel}
+              onQuickAddPersonnel={onQuickAddPersonnel}
             />
           )}
         </div>
@@ -956,18 +983,28 @@ function ContractForm({ initial, onSave, onClose }) {
 
 /* ------------------------------ form: line item (hạng mục) ------------------------------ */
 
-function LineItemForm({ initial, onSave, onClose }) {
+function LineItemForm({ initial, onSave, onClose, personnel, onQuickAddPersonnel }) {
   const [f, setF] = useState(() => {
     if (initial) {
       const contractValue = initial.contractValue || 0;
-      const extraAmount = initial.extraAmount != null ? initial.extraAmount : (initial.actualValue || 0) - contractValue;
-      return { quantity: 1, unitPrice: contractValue, group: CATALOG_GROUPS[0], ...initial, extraAmount };
+      return { quantity: 1, unitPrice: contractValue, group: CATALOG_GROUPS[0], personnelId: "", extraAmount: 0, actualValue: contractValue, ...initial };
     }
-    return { name: "", group: CATALOG_GROUPS[0], quantity: 1, unitPrice: "", contractValue: "", extraAmount: "", paidAmount: "", notes: "" };
+    return { name: "", group: CATALOG_GROUPS[0], personnelId: "", quantity: 1, unitPrice: "", contractValue: "", extraAmount: "", actualValue: "", paidAmount: "", notes: "" };
   });
+  const [showQuickAddPerson, setShowQuickAddPerson] = useState(false);
+  const [quickPersonName, setQuickPersonName] = useState("");
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const computedContractValue = (Number(f.quantity) || 0) * (Number(f.unitPrice) || 0);
-  const computedActualValue = computedContractValue + (Number(f.extraAmount) || 0);
+  const totalBilledToClient = computedContractValue + (Number(f.extraAmount) || 0);
+
+  const handleQuickAddPerson = () => {
+    if (!quickPersonName.trim()) return;
+    const newPerson = onQuickAddPersonnel({ name: quickPersonName.trim(), role: f.name || "", phone: "", email: "", dayRate: 0 });
+    setF({ ...f, personnelId: newPerson.id });
+    setQuickPersonName("");
+    setShowQuickAddPerson(false);
+  };
+
   return (
     <Modal title={initial && initial.id ? "Sửa hạng mục" : "Hạng mục mới"} onClose={onClose}>
       <div className="mv-form-grid">
@@ -983,15 +1020,37 @@ function LineItemForm({ initial, onSave, onClose }) {
           </select>
         </Field>
       </div>
+      {f.group === "Nhân sự" && personnel && (
+        <Field label="Nhân sự phụ trách">
+          {showQuickAddPerson ? (
+            <div className="mv-catalog-add-form">
+              <input className="mv-input" placeholder="Tên nhân sự mới" value={quickPersonName} onChange={(e) => setQuickPersonName(e.target.value)} />
+              <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={handleQuickAddPerson}>Thêm</button>
+              <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setShowQuickAddPerson(false)}>Huỷ</button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8 }}>
+              <select className="mv-input" value={f.personnelId} onChange={set("personnelId")}>
+                <option value="">— Chưa gán —</option>
+                {personnel.map((p) => <option key={p.id} value={p.id}>{p.name} — {p.role}</option>)}
+              </select>
+              <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setShowQuickAddPerson(true)}>+ Nhân sự mới</button>
+            </div>
+          )}
+        </Field>
+      )}
       <div className="mv-form-grid">
         <Field label="Số lượng"><input type="number" className="mv-input" value={f.quantity} onChange={set("quantity")} /></Field>
-        <Field label="Đơn giá — dự toán gửi khách (VND)"><input type="number" className="mv-input" value={f.unitPrice} onChange={set("unitPrice")} /></Field>
+        <Field label="Đơn giá — báo khách (VND)"><input type="number" className="mv-input" value={f.unitPrice} onChange={set("unitPrice")} /></Field>
       </div>
       <div className="mv-form-grid">
-        <Field label="Phát sinh (VND)"><input type="number" className="mv-input" value={f.extraAmount} onChange={set("extraAmount")} placeholder="0 nếu không có phát sinh" /></Field>
-        <Field label="Thực chi (tự tính = dự toán + phát sinh)"><input className="mv-input" value={fmtVND(computedActualValue)} disabled /></Field>
+        <Field label="Phát sinh — báo thêm cho khách (VND)"><input type="number" className="mv-input" value={f.extraAmount} onChange={set("extraAmount")} placeholder="0 nếu không có phát sinh" /></Field>
+        <Field label="Tổng báo khách (tự tính)"><input className="mv-input" value={fmtVND(totalBilledToClient)} disabled /></Field>
       </div>
-      <Field label="Đã thanh toán (VND)"><input type="number" className="mv-input" value={f.paidAmount} onChange={set("paidAmount")} /></Field>
+      <div className="mv-form-grid">
+        <Field label="Thực chi — chi phí nội bộ (VND)"><input type="number" className="mv-input" value={f.actualValue} onChange={set("actualValue")} placeholder="Số tiền công ty thực sự chi ra" /></Field>
+        <Field label="Đã thanh toán (VND)"><input type="number" className="mv-input" value={f.paidAmount} onChange={set("paidAmount")} /></Field>
+      </div>
       <Field label="Ghi chú"><textarea className="mv-input" rows={2} value={f.notes} onChange={set("notes")} placeholder="VD: lý do phát sinh, thoả thuận thêm..." /></Field>
       <div className="mv-modal-actions">
         <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
@@ -1003,7 +1062,7 @@ function LineItemForm({ initial, onSave, onClose }) {
             unitPrice: Number(f.unitPrice) || 0,
             contractValue: computedContractValue,
             extraAmount: Number(f.extraAmount) || 0,
-            actualValue: computedActualValue,
+            actualValue: Number(f.actualValue) || 0,
             paidAmount: Number(f.paidAmount) || 0,
           })}
         >
@@ -1315,6 +1374,12 @@ function ProjectsList({ data, persist, openProject }) {
     persist({ ...data, timelineCatalog: [...data.timelineCatalog, { id: uid(), group, name }] });
   };
 
+  const quickAddPersonnelGlobal = (personData) => {
+    const newPerson = { ...personData, id: uid() };
+    persist({ ...data, personnel: [...data.personnel, newPerson] });
+    return newPerson;
+  };
+
   const deleteProject = (id) => {
     const next = {
       ...data,
@@ -1375,6 +1440,8 @@ function ProjectsList({ data, persist, openProject }) {
           onAddTimelineCatalogItem={addTimelineCatalogItem}
           catalog={data.catalog}
           onAddCatalogItem={addCatalogItem}
+          personnel={data.personnel}
+          onQuickAddPersonnel={quickAddPersonnelGlobal}
         />
       )}
     </div>
@@ -1611,7 +1678,6 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const [editingLineItem, setEditingLineItem] = useState(null);
   const [showMilestoneForm, setShowMilestoneForm] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState(null);
-  const [showAssignForm, setShowAssignForm] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(null);
 
   if (!project) {
@@ -1626,7 +1692,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const contracts = data.contracts.filter((c) => c.projectId === projectId);
   const lineItems = data.lineItems.filter((l) => l.projectId === projectId);
   const milestones = data.milestones.filter((m) => m.projectId === projectId).sort((a, b) => new Date(a.date) - new Date(b.date));
-  const assignments = data.assignments.filter((a) => a.projectId === projectId);
+  const crewLineItems = lineItems.filter((l) => l.group === "Nhân sự" && l.personnelId);
   const transactions = data.transactions.filter((t) => t.projectId === projectId).sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const thu = transactions.filter((t) => t.type === "Thu").reduce((s, t) => s + t.amount, 0);
@@ -1676,6 +1742,11 @@ function ProjectDetail({ data, persist, projectId, back }) {
       if (parsed && parsed.name) quickAddFromCatalog(parsed);
     } catch (err) {}
   };
+  const quickAddPersonnel = (personData) => {
+    const newPerson = { ...personData, id: uid() };
+    persist({ ...data, personnel: [...data.personnel, newPerson] });
+    return newPerson;
+  };
 
   const saveMilestone = (m) => {
     const next = { ...data };
@@ -1697,18 +1768,11 @@ function ProjectDetail({ data, persist, projectId, back }) {
     persist({ ...data, timelineCatalog: [...data.timelineCatalog, { id: uid(), group, name }] });
   };
 
-  const saveAssignment = (a) => {
-    persist({ ...data, assignments: [...data.assignments, { ...a, id: uid(), projectId }] });
-    setShowAssignForm(false);
+  const crewList = crewLineItems.map((l) => ({ ...l, person: data.personnel.find((p) => p.id === l.personnelId) }));
+  const addCrewMember = () => {
+    setEditingLineItem({ name: "", group: "Nhân sự", personnelId: "", quantity: 1, unitPrice: "", contractValue: "", extraAmount: "", paidAmount: "", notes: "" });
+    setShowLineItemForm(true);
   };
-  const removeAssignment = (id) => { persist({ ...data, assignments: data.assignments.filter((a) => a.id !== id) }); setConfirmRemove(null); };
-  const markAssignmentPaid = (id, paidAmount) => {
-    persist({ ...data, assignments: data.assignments.map((a) => (a.id === id ? { ...a, paidAmount } : a)) });
-  };
-
-
-  const assignedPersonnel = assignments.map((a) => ({ ...a, person: data.personnel.find((p) => p.id === a.personnelId) }));
-  const availablePersonnel = data.personnel.filter((p) => !assignments.some((a) => a.personnelId === p.id));
 
   const handleExportProject = () => {
     const bundle = {
@@ -1874,8 +1938,9 @@ function ProjectDetail({ data, persist, projectId, back }) {
           {lineItems.length > 0 && (() => {
             const subtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
             const totalExtra = lineItems.reduce((s, l) => s + (l.extraAmount || 0), 0);
-            const vat = subtotal * 0.08;
-            const totalWithVat = subtotal + vat;
+            const billableTotal = subtotal + totalExtra;
+            const vat = billableTotal * 0.08;
+            const totalWithVat = billableTotal + vat;
             const grouped = CATALOG_GROUPS.map((g) => ({ group: g, items: lineItems.filter((l) => (l.group || "Miscellaneous") === g) }))
               .concat([{ group: "Khác", items: lineItems.filter((l) => !CATALOG_GROUPS.includes(l.group)) }])
               .filter((g) => g.items.length > 0);
@@ -1932,19 +1997,24 @@ function ProjectDetail({ data, persist, projectId, back }) {
                   </tbody>
                 ))}
                 <tfoot>
-                  <tr className="mv-no-print">
-                    <td colSpan={3} className="mv-quote-total-label">Tổng phát sinh</td>
-                    <td className="mv-mono-money" style={{ fontWeight: 700, color: totalExtra > 0 ? "#C1443C" : undefined }}>{fmtVND(totalExtra)}</td>
-                    <td colSpan={4}></td>
+                  <tr>
+                    <td colSpan={3} className="mv-quote-total-label">Tổng theo đơn giá</td>
+                    <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(subtotal)}</td>
+                    <td colSpan={4} className="mv-no-print"></td>
+                  </tr>
+                  <tr>
+                    <td colSpan={3} className="mv-quote-total-label">Tổng phát sinh (báo khách)</td>
+                    <td className="mv-quote-amount-cell mv-mono-money" style={{ color: totalExtra > 0 ? "#C1443C" : undefined }}>{fmtVND(totalExtra)}</td>
+                    <td colSpan={4} className="mv-no-print"></td>
                   </tr>
                   <tr className="mv-no-print">
-                    <td colSpan={4} className="mv-quote-total-label">Tổng thực chi</td>
+                    <td colSpan={4} className="mv-quote-total-label">Tổng thực chi (nội bộ)</td>
                     <td className="mv-mono-money" style={{ fontWeight: 700 }}>{fmtVND(lineItems.reduce((s, l) => s + l.actualValue, 0))}</td>
                     <td colSpan={3}></td>
                   </tr>
                   <tr>
-                    <td colSpan={3} className="mv-quote-total-label">Tổng dự toán (chưa VAT)</td>
-                    <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(subtotal)}</td>
+                    <td colSpan={3} className="mv-quote-total-label">Tổng báo khách (chưa VAT)</td>
+                    <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(billableTotal)}</td>
                     <td colSpan={4} className="mv-no-print"></td>
                   </tr>
                   <tr>
@@ -1962,7 +2032,6 @@ function ProjectDetail({ data, persist, projectId, back }) {
               </>
             );
           })()}
-          {showLineItemForm && <LineItemForm initial={editingLineItem} onClose={() => { setShowLineItemForm(false); setEditingLineItem(null); }} onSave={saveLineItem} />}
         </div>
         </>
       )}
@@ -2019,43 +2088,54 @@ function ProjectDetail({ data, persist, projectId, back }) {
         <div className="mv-panel">
           <div className="mv-panel-head">
             <h3 className="mv-panel-title"><Users size={16} /> Nhân sự tham gia dự án</h3>
-            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => setShowAssignForm(true)}><Plus size={14} /> Thêm nhân sự</button>
+            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={addCrewMember}><Plus size={14} /> Thêm nhân sự</button>
           </div>
-          {assignedPersonnel.length === 0 && <p className="mv-empty-note">Chưa có nhân sự nào được gán vào dự án này.</p>}
-          {assignedPersonnel.length > 0 && (
+          {crewList.length === 0 && <p className="mv-empty-note">Chưa có nhân sự nào được gán vào dự án này. Bấm "Thêm nhân sự" hoặc kéo hạng mục nhóm "Nhân sự" ở tab Dòng tiền và chọn người phụ trách.</p>}
+          {crewList.length > 0 && (
             <div className="mv-stats-row mv-stats-row-sm" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-              <StatCard label="Tổng thù lao" value={fmtVND(assignedPersonnel.reduce((s, a) => s + a.fee, 0))} />
-              <StatCard label="Đã thanh toán" value={fmtVND(assignedPersonnel.reduce((s, a) => s + (a.paidAmount || 0), 0))} tone="#5FB77E" />
-              <StatCard label="Còn nợ" value={fmtVND(assignedPersonnel.reduce((s, a) => s + (a.fee - (a.paidAmount || 0)), 0))} tone="#C1443C" />
+              <StatCard label="Tổng thù lao" value={fmtVND(crewList.reduce((s, l) => s + l.actualValue, 0))} />
+              <StatCard label="Đã thanh toán" value={fmtVND(crewList.reduce((s, l) => s + (l.paidAmount || 0), 0))} tone="#5FB77E" />
+              <StatCard label="Còn nợ" value={fmtVND(crewList.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0))} tone="#C1443C" />
             </div>
           )}
-          {assignedPersonnel.map((a) => {
-            const debt = a.fee - (a.paidAmount || 0);
-            return confirmRemove === a.id ? (
-              <ConfirmBar key={a.id} text={`Bỏ ${a.person?.name || "nhân sự"} khỏi dự án?`} onConfirm={() => removeAssignment(a.id)} onCancel={() => setConfirmRemove(null)} />
+          {crewList.map((l) => {
+            const debt = l.actualValue - (l.paidAmount || 0);
+            return confirmRemove === l.id ? (
+              <ConfirmBar key={l.id} text={`Bỏ ${l.person?.name || "nhân sự"} khỏi dự án?`} onConfirm={() => deleteLineItem(l.id)} onCancel={() => setConfirmRemove(null)} />
             ) : (
-              <div key={a.id} className="mv-row-card mv-row-card-wrap">
+              <div key={l.id} className="mv-row-card mv-row-card-wrap mv-quote-row-clickable" onClick={() => { setEditingLineItem(l); setShowLineItemForm(true); }}>
                 <div>
-                  <div className="mv-row-title">{a.person?.name || "(đã xoá khỏi danh sách)"}</div>
-                  <div className="mv-row-sub">{a.roleInProject || a.person?.role} · {a.person?.phone}</div>
+                  <div className="mv-row-title">{l.person?.name || "(đã xoá khỏi danh sách)"}</div>
+                  <div className="mv-row-sub">{l.name || l.person?.role} · {l.person?.phone}</div>
+                  {(l.extraAmount || 0) > 0 && <div className="mv-row-sub">Bao gồm phát sinh: {fmtVND(l.extraAmount)}</div>}
                 </div>
-                <div className="mv-row-right mv-assignment-pay">
+                <div className="mv-row-right mv-assignment-pay" onClick={(e) => e.stopPropagation()}>
                   <div className="mv-assignment-pay-nums">
-                    <span className="mv-mono-money">{fmtVND(a.fee)}</span>
+                    <span className="mv-mono-money">{fmtVND(l.actualValue)}</span>
                     <span className={debt > 0 ? "mv-debt-badge" : "mv-paid-badge"}>
                       {debt > 0 ? `Còn nợ ${fmtVND(debt)}` : "Đã trả đủ"}
                     </span>
                   </div>
                   {debt > 0 && (
-                    <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => markAssignmentPaid(a.id, a.fee)}>Đánh dấu đã trả đủ</button>
+                    <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => markLineItemPaid(l.id, l.actualValue)}>Đánh dấu đã trả đủ</button>
                   )}
-                  <button className="mv-icon-btn" onClick={() => setConfirmRemove(a.id)}><Trash2 size={14} /></button>
+                  <button className="mv-icon-btn" onClick={() => { setEditingLineItem(l); setShowLineItemForm(true); }}><Pencil size={14} /></button>
+                  <button className="mv-icon-btn" onClick={() => setConfirmRemove(l.id)}><Trash2 size={14} /></button>
                 </div>
               </div>
             );
           })}
-          {showAssignForm && <AssignmentForm personnelList={availablePersonnel} onClose={() => setShowAssignForm(false)} onSave={saveAssignment} />}
         </div>
+      )}
+
+      {showLineItemForm && (
+        <LineItemForm
+          initial={editingLineItem}
+          onClose={() => { setShowLineItemForm(false); setEditingLineItem(null); }}
+          onSave={saveLineItem}
+          personnel={data.personnel}
+          onQuickAddPersonnel={quickAddPersonnel}
+        />
       )}
     </div>
   );
@@ -2081,18 +2161,17 @@ function PersonnelPage({ data, persist }) {
     persist({
       ...data,
       personnel: data.personnel.filter((p) => p.id !== id),
-      assignments: data.assignments.filter((a) => a.personnelId !== id),
+      lineItems: data.lineItems.map((l) => (l.personnelId === id ? { ...l, personnelId: "" } : l)),
     });
     setConfirmDelete(null);
   };
 
   const filtered = data.personnel.filter((p) => (p.name + p.role).toLowerCase().includes(query.toLowerCase()));
 
-  const projectCount = (personnelId) => data.assignments.filter((a) => a.personnelId === personnelId).length;
+  const crewItemsOf = (personnelId) => data.lineItems.filter((l) => l.group === "Nhân sự" && l.personnelId === personnelId);
+  const projectCount = (personnelId) => new Set(crewItemsOf(personnelId).map((l) => l.projectId)).size;
   const debtOf = (personnelId) =>
-    data.assignments
-      .filter((a) => a.personnelId === personnelId)
-      .reduce((s, a) => s + (a.fee - (a.paidAmount || 0)), 0);
+    crewItemsOf(personnelId).reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0);
   const totalDebtAll = data.personnel.reduce((s, p) => s + debtOf(p.id), 0);
 
   return (
