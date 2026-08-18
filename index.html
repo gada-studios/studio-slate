@@ -1191,6 +1191,85 @@ function TransactionForm({ initial, onSave, onClose }) {
 
 /* -------------------------------- dashboard ---------------------------------- */
 
+function CompanyCalendar({ data, openProject }) {
+  const todayKey = todayISO();
+  const [viewDate, setViewDate] = useState(new Date());
+
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const firstOfMonth = new Date(year, month, 1);
+  const leadingBlanks = (firstOfMonth.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const cells = [];
+  for (let i = 0; i < leadingBlanks; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const milestonesByDay = {};
+  data.milestones.forEach((m) => {
+    if (!m.date) return;
+    const dt = new Date(m.date);
+    if (dt.getFullYear() === year && dt.getMonth() === month) {
+      const key = dt.getDate();
+      const proj = data.projects.find((p) => p.id === m.projectId);
+      (milestonesByDay[key] = milestonesByDay[key] || []).push({ ...m, projectName: proj?.name || "—" });
+    }
+  });
+
+  const goMonth = (delta) => setViewDate(new Date(year, month + delta, 1));
+  const handlePrint = () => window.print();
+
+  return (
+    <div className="mv-panel">
+      <div className="mv-panel-head mv-no-print">
+        <h3 className="mv-panel-title"><Calendar size={16} /> Lịch tổng quan toàn công ty</h3>
+        <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={handlePrint}><FileText size={14} /> Tải PDF</button>
+      </div>
+      <div className="mv-calendar" id="mv-printable-company-calendar">
+        <div className="mv-print-only mv-print-header">
+          <img src={LOGO_DATA_URI} alt="Logo" className="mv-print-logo" />
+          <div className="mv-print-title">Lịch tổng quan toàn công ty</div>
+        </div>
+        <div className="mv-calendar-head">
+          <button className="mv-icon-btn mv-no-print" onClick={() => goMonth(-1)}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /></button>
+          <span className="mv-calendar-title">{MONTH_LABELS[month]} {year}</span>
+          <button className="mv-icon-btn mv-no-print" onClick={() => goMonth(1)}><ChevronRight size={16} /></button>
+        </div>
+        <div className="mv-calendar-weekdays">
+          {WEEKDAY_LABELS.map((w) => <div key={w} className="mv-calendar-weekday">{w}</div>)}
+        </div>
+        <div className="mv-calendar-grid">
+          {cells.map((d, i) => {
+            if (d === null) return <div key={i} className="mv-calendar-cell mv-calendar-cell-blank" />;
+            const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+            const dayMilestones = milestonesByDay[d] || [];
+            const isToday = dateKey === todayKey;
+            return (
+              <div key={i} className={`mv-calendar-cell ${isToday ? "mv-calendar-cell-today" : ""}`}>
+                <div className="mv-calendar-daynum">{d}</div>
+                <div className="mv-calendar-chips">
+                  {dayMilestones.map((m) => (
+                    <button
+                      key={m.id}
+                      className="mv-calendar-chip"
+                      style={{ "--chip-color": STATUS_META[m.status]?.color || "#9C948A" }}
+                      onClick={() => openProject(m.projectId)}
+                      title={`${m.projectName} — ${m.name}`}
+                    >
+                      {m.projectName}: {m.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Dashboard({ data, openProject }) {
   const { projects, milestones, contracts, lineItems } = data;
   const active = projects.filter((p) => !["Hoàn thành", "Tạm dừng"].includes(p.status));
@@ -1299,6 +1378,8 @@ function Dashboard({ data, openProject }) {
           })}
         </div>
       </div>
+
+      <CompanyCalendar data={data} openProject={openProject} />
     </div>
   );
 }
@@ -1585,7 +1666,7 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, time
               <div
                 key={i}
                 className={`mv-calendar-cell ${isToday ? "mv-calendar-cell-today" : ""}`}
-                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; e.currentTarget.classList.add("mv-calendar-cell-dragover"); }}
+                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = e.dataTransfer.effectAllowed === "move" ? "move" : "copy"; e.currentTarget.classList.add("mv-calendar-cell-dragover"); }}
                 onDragLeave={(e) => { e.currentTarget.classList.remove("mv-calendar-cell-dragover"); }}
                 onDrop={(e) => { e.currentTarget.classList.remove("mv-calendar-cell-dragover"); handleDrop(e, d); }}
               >
@@ -2779,20 +2860,21 @@ const CSS = `
 @media print {
   body * { visibility: hidden; }
   #mv-printable-calendar, #mv-printable-calendar *,
-  #mv-printable-lineitems, #mv-printable-lineitems * { visibility: visible; }
-  #mv-printable-calendar, #mv-printable-lineitems { position: absolute; top: 0; left: 0; width: 100%; background: #fff; color: #111; border: none; }
-  #mv-printable-calendar .mv-no-print, #mv-printable-lineitems .mv-no-print { display: none !important; }
-  #mv-printable-calendar .mv-print-only, #mv-printable-lineitems .mv-print-only { display: block; }
-  #mv-printable-calendar .mv-print-title, #mv-printable-lineitems .mv-print-title { font-family: 'Oswald', sans-serif; font-size: 20px; font-weight: 600; margin-bottom: 0; color: #111; }
-  #mv-printable-calendar .mv-print-header, #mv-printable-lineitems .mv-print-header { display: flex; align-items: center; margin-bottom: 18px; }
-  #mv-printable-calendar .mv-print-sub, #mv-printable-lineitems .mv-print-sub { color: #444; }
-  #mv-printable-calendar .mv-print-logo, #mv-printable-lineitems .mv-print-logo { filter: invert(1); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #mv-printable-lineitems, #mv-printable-lineitems *,
+  #mv-printable-company-calendar, #mv-printable-company-calendar * { visibility: visible; }
+  #mv-printable-calendar, #mv-printable-lineitems, #mv-printable-company-calendar { position: absolute; top: 0; left: 0; width: 100%; background: #fff; color: #111; border: none; }
+  #mv-printable-calendar .mv-no-print, #mv-printable-lineitems .mv-no-print, #mv-printable-company-calendar .mv-no-print { display: none !important; }
+  #mv-printable-calendar .mv-print-only, #mv-printable-lineitems .mv-print-only, #mv-printable-company-calendar .mv-print-only { display: block; }
+  #mv-printable-calendar .mv-print-title, #mv-printable-lineitems .mv-print-title, #mv-printable-company-calendar .mv-print-title { font-family: 'Oswald', sans-serif; font-size: 20px; font-weight: 600; margin-bottom: 0; color: #111; }
+  #mv-printable-calendar .mv-print-header, #mv-printable-lineitems .mv-print-header, #mv-printable-company-calendar .mv-print-header { display: flex; align-items: center; margin-bottom: 18px; }
+  #mv-printable-calendar .mv-print-sub, #mv-printable-lineitems .mv-print-sub, #mv-printable-company-calendar .mv-print-sub { color: #444; }
+  #mv-printable-calendar .mv-print-logo, #mv-printable-lineitems .mv-print-logo, #mv-printable-company-calendar .mv-print-logo { filter: invert(1); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
-  #mv-printable-calendar .mv-calendar-title { color: #111; }
-  #mv-printable-calendar .mv-calendar-weekday { color: #555; }
-  #mv-printable-calendar .mv-calendar-cell { border: 1px solid #ccc; background: #fff; break-inside: avoid; }
-  #mv-printable-calendar .mv-calendar-daynum { color: #555; }
-  #mv-printable-calendar .mv-calendar-chip { color: #111; border-left-width: 3px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #mv-printable-calendar .mv-calendar-title, #mv-printable-company-calendar .mv-calendar-title { color: #111; }
+  #mv-printable-calendar .mv-calendar-weekday, #mv-printable-company-calendar .mv-calendar-weekday { color: #555; }
+  #mv-printable-calendar .mv-calendar-cell, #mv-printable-company-calendar .mv-calendar-cell { border: 1px solid #ccc; background: #fff; break-inside: avoid; }
+  #mv-printable-calendar .mv-calendar-daynum, #mv-printable-company-calendar .mv-calendar-daynum { color: #555; }
+  #mv-printable-calendar .mv-calendar-chip, #mv-printable-company-calendar .mv-calendar-chip { color: #111; border-left-width: 3px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
   #mv-printable-lineitems { padding: 8mm; }
   #mv-printable-lineitems .mv-quote-table th { color: #555; border-bottom: 1px solid #999; }
