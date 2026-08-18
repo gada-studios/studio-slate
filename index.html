@@ -1195,7 +1195,10 @@ function Dashboard({ data, openProject }) {
   const { projects, milestones, contracts, lineItems } = data;
   const active = projects.filter((p) => !["Hoàn thành", "Tạm dừng"].includes(p.status));
 
-  const revenueOf = (projectId) => contracts.filter((c) => c.projectId === projectId).reduce((s, c) => s + c.value, 0);
+  const revenueOf = (projectId) => {
+    const items = lineItems.filter((l) => l.projectId === projectId);
+    return items.reduce((s, l) => s + l.contractValue + (l.extraAmount || 0), 0);
+  };
   const costOf = (projectId) => lineItems.filter((l) => l.projectId === projectId).reduce((s, l) => s + l.actualValue, 0);
 
   const totalThu = projects.reduce((s, p) => s + revenueOf(p.id), 0);
@@ -1700,7 +1703,8 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const lineItemsActual = lineItems.reduce((s, l) => s + l.actualValue, 0);
   const lineItemsDebt = lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0);
   const lineItemsSubtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
-  const clientTotal = contracts.reduce((s, c) => s + c.value, 0);
+  const lineItemsExtraTotal = lineItems.reduce((s, l) => s + (l.extraAmount || 0), 0);
+  const clientTotal = lineItemsSubtotal + lineItemsExtraTotal;
   const clientReceived = contracts.reduce((s, c) => s + (c.receivedAmount || 0), 0);
   const clientDebtTotal = clientTotal - clientReceived;
   const profit = clientTotal - lineItemsActual;
