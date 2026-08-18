@@ -216,6 +216,8 @@ function useDriveSync(dataRef, applyRemoteData) {
   const [errorMsg, setErrorMsg] = useState("");
   const [conflict, setConflict] = useState(null); // { local, remote }
   const [scriptReady, setScriptReady] = useState(false);
+  const [scriptError, setScriptError] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const tokenClientRef = useRef(null);
   const tokenClientForIdRef = useRef("");
   const accessTokenRef = useRef("");
@@ -234,9 +236,10 @@ function useDriveSync(dataRef, applyRemoteData) {
   // handler (no pending network/script load in between) — otherwise browsers
   // silently block the popup because the click's "user gesture" has expired.
   useEffect(() => {
-    if (!clientId) { setScriptReady(false); return; }
+    if (!clientId) { setScriptReady(false); setScriptError(false); return; }
     let cancelled = false;
     setScriptReady(false);
+    setScriptError(false);
     loadGoogleScript()
       .then(() => {
         if (cancelled) return;
@@ -250,9 +253,11 @@ function useDriveSync(dataRef, applyRemoteData) {
         }
         setScriptReady(true);
       })
-      .catch(() => { if (!cancelled) setScriptReady(false); });
+      .catch(() => { if (!cancelled) { setScriptReady(false); setScriptError(true); } });
     return () => { cancelled = true; };
-  }, [clientId]);
+  }, [clientId, reloadNonce]);
+
+  const retryScriptLoad = useCallback(() => setReloadNonce((n) => n + 1), []);
 
   const ensureTokenClient = useCallback(async () => {
     if (!clientId) throw new Error("Chưa có Client ID.");
@@ -469,7 +474,7 @@ function useDriveSync(dataRef, applyRemoteData) {
     return () => window.removeEventListener("online", onOnline);
   }, [schedulePush, dataRef]);
 
-  return { clientId, saveClientId, status, lastSyncedAt, errorMsg, conflict, connect, disconnect, resolveConflict, schedulePush, scriptReady };
+  return { clientId, saveClientId, status, lastSyncedAt, errorMsg, conflict, connect, disconnect, resolveConflict, schedulePush, scriptReady, scriptError, retryScriptLoad };
 }
 
 /* ------------------------------- app data hook -------------------------------- */
@@ -1351,8 +1356,18 @@ function DriveSettingsModal({ drive, onClose }) {
 
       <DriveStatusLine status={drive.status} lastSyncedAt={drive.lastSyncedAt} errorMsg={drive.errorMsg} />
 
+      {hasId && drive.scriptError && (
+        <p className="mv-drive-script-error">
+          Không tải được script đăng nhập Google (có thể do mất mạng hoặc trình chặn quảng cáo/extension trên trình duyệt).
+        </p>
+      )}
+
       <div className="mv-modal-actions" style={{ justifyContent: "flex-start", marginTop: 14 }}>
-        {!isConnected ? (
+        {drive.scriptError ? (
+          <button className="mv-btn mv-btn-ghost" onClick={drive.retryScriptLoad}>
+            <RefreshCw size={15} /> Thử lại
+          </button>
+        ) : !isConnected ? (
           <button
             className="mv-btn mv-btn-primary"
             disabled={!hasId || !drive.scriptReady}
@@ -1496,6 +1511,7 @@ const CSS = `
 .mv-drive-status { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
 .mv-drive-intro { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin: 0 0 16px; }
 .mv-drive-hint { font-size: 11.5px; color: var(--text-muted); margin-top: 16px; }
+.mv-drive-script-error { font-size: 12.5px; color: var(--red); background: color-mix(in srgb, var(--red) 12%, var(--surface)); border: 1px solid var(--red); border-radius: 8px; padding: 10px 12px; margin: 4px 0 0; }
 .mv-drive-divider { height: 1px; background: var(--border); margin: 4px 0 14px; }
 .mv-conflict-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .mv-conflict-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; }
