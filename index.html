@@ -2795,9 +2795,9 @@ const CSS = `
 
 @media (max-width: 860px) {
   .mv-shell { flex-direction: column; }
-  .mv-sidebar { width: 100%; flex-direction: row; align-items: center; }
+  .mv-sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; row-gap: 10px; }
   .mv-nav { flex-direction: row; }
-  .mv-sidebar-footer { display: none; }
+  .mv-sidebar-footer { display: flex; width: 100%; order: 3; }
   .mv-dash-grid, .mv-overview-grid, .mv-form-grid { grid-template-columns: 1fr; }
   .mv-stats-row { grid-template-columns: repeat(2, 1fr); }
   .mv-lineitem-cols { grid-template-columns: repeat(2, 1fr); }
