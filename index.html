@@ -21,7 +21,7 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react">
+<script type="text/plain" id="mv-app-source">
 const { useState, useEffect, useRef, useCallback } = React;
 
 /* --------------------------- local storage shim ---------------------------- */
@@ -1556,6 +1556,14 @@ root.render(<App />);
 
 </script>
 <script>
+  (function () {
+    var src = document.getElementById("mv-app-source").textContent;
+    var compiled = Babel.transform(src, {
+      presets: [["react", { runtime: "classic" }]],
+    }).code;
+    (0, eval)(compiled);
+  })();
+
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("./sw.js").catch(() => {});
