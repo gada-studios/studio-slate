@@ -355,7 +355,8 @@ function useSupabaseSync(dataRef, applyRemoteData) {
       const row = await fetchRemoteRow(loggedInUser.id);
       const local = dataRef.current;
       const localUpdatedAt = local && local._meta ? local._meta.updatedAt : null;
-      const localHasRealData = local && local.projects && local.projects.length > 0;
+      const localIsUntouchedSeed = !!(local && local._meta && local._meta.isSeed);
+      const localHasRealData = local && local.projects && local.projects.length > 0 && !localIsUntouchedSeed;
 
       if (!row) {
         await pushToRemote(loggedInUser.id, local);
@@ -366,6 +367,9 @@ function useSupabaseSync(dataRef, applyRemoteData) {
         if (!remoteHasRealData) {
           await pushToRemote(loggedInUser.id, local);
         } else if (!localHasRealData) {
+          // Local is either empty or still the untouched demo/seed data —
+          // always safe to just take whatever is already saved on the server,
+          // no need to bother the person with a choice.
           applyRemoteData(remote);
         } else if (localUpdatedAt && remoteUpdatedAt && new Date(localUpdatedAt).getTime() === new Date(remoteUpdatedAt).getTime()) {
           // already in sync
@@ -564,14 +568,14 @@ function useAppData() {
           initial = normalizeData(JSON.parse(res.value));
         } else {
           initial = normalizeData(seedData());
-          initial._meta = { updatedAt: new Date().toISOString() };
+          initial._meta = { updatedAt: new Date().toISOString(), isSeed: true };
           await window.storage.set(STORAGE_KEY, JSON.stringify(initial), false);
         }
         dataRef.current = initial;
         setData(initial);
       } catch (e) {
         const seed = normalizeData(seedData());
-        seed._meta = { updatedAt: new Date().toISOString() };
+        seed._meta = { updatedAt: new Date().toISOString(), isSeed: true };
         dataRef.current = seed;
         setData(seed);
       } finally {
@@ -2343,20 +2347,25 @@ function SyncConflictModal({ conflict, onResolve }) {
   const remoteCount = conflict.remote?.projects?.length || 0;
   const localTime = conflict.local?._meta?.updatedAt ? new Date(conflict.local._meta.updatedAt).toLocaleString("vi-VN") : "không rõ";
   const remoteTime = conflict.remote?._meta?.updatedAt ? new Date(conflict.remote._meta.updatedAt).toLocaleString("vi-VN") : "không rõ";
+  const remoteIsNewer = conflict.remote?._meta?.updatedAt && conflict.local?._meta?.updatedAt
+    ? new Date(conflict.remote._meta.updatedAt) >= new Date(conflict.local._meta.updatedAt)
+    : true;
   return (
     <Modal title="Dữ liệu không khớp" onClose={() => {}}>
       <p className="mv-drive-intro">
         Dữ liệu trên máy này khác với dữ liệu đang lưu trên server. Chọn bản bạn muốn giữ
-        (bản còn lại sẽ bị ghi đè).
+        (bản còn lại sẽ bị ghi đè) — <strong>nếu không chắc, nên chọn bản trên server</strong> vì đó thường
+        là bản tổng hợp mới nhất từ mọi thiết bị.
       </p>
       <div className="mv-conflict-grid">
         <div className="mv-conflict-card">
           <div className="mv-detail-label">Trên máy này</div>
           <div className="mv-detail-value">{localCount} dự án</div>
           <div className="mv-row-sub mv-mono-date">Cập nhật {localTime}</div>
-          <button className="mv-btn mv-btn-primary mv-btn-sm" style={{ marginTop: 10 }} onClick={() => onResolve("local")}>Dùng bản này</button>
+          <button className="mv-btn mv-btn-ghost mv-btn-sm" style={{ marginTop: 10 }} onClick={() => onResolve("local")}>Dùng bản này</button>
         </div>
-        <div className="mv-conflict-card">
+        <div className="mv-conflict-card mv-conflict-card-recommended">
+          <div className="mv-conflict-badge">Khuyên dùng</div>
           <div className="mv-detail-label">Trên server</div>
           <div className="mv-detail-value">{remoteCount} dự án</div>
           <div className="mv-row-sub mv-mono-date">Cập nhật {remoteTime}</div>
@@ -2512,7 +2521,9 @@ const CSS = `
 .mv-drive-script-error { font-size: 12.5px; color: var(--red); background: color-mix(in srgb, var(--red) 12%, var(--surface)); border: 1px solid var(--red); border-radius: 8px; padding: 10px 12px; margin: 4px 0 0; }
 .mv-drive-divider { height: 1px; background: var(--border); margin: 4px 0 14px; }
 .mv-conflict-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.mv-conflict-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; }
+.mv-conflict-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; position: relative; }
+.mv-conflict-card-recommended { border-color: var(--gold); background: color-mix(in srgb, var(--gold) 10%, var(--surface-2)); }
+.mv-conflict-badge { position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: var(--gold); color: #1D1A16; font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; padding: 2px 10px; border-radius: 10px; }
 
 .mv-app {
   --bg: #14120F;
