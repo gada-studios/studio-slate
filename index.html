@@ -120,6 +120,25 @@ const EXPENSE_CATEGORIES = [
   "Giấy phép quay", "Nhân sự", "Khác",
 ];
 
+const CATALOG_GROUPS = ["Nhân sự", "SUP", "Post", "Logistics", "Khác"];
+const DEFAULT_CATALOG_ITEMS = {
+  "Nhân sự": [
+    "Đạo diễn", "DOP", "Camop", "Focus", "AD", "Art Director", "Photographer",
+    "BTS", "Stylist", "Makeup", "Hair", "Producer", "Line producer", "PA",
+    "Runner", "Master Location",
+  ],
+  "SUP": ["Rental house", "Setdesign", "Bối cảnh", "Studio"],
+  "Post": ["Offline", "Online", "VFX", "CGI", "Coloris"],
+  "Logistics": ["Vé xe/máy bay", "Xe đoàn", "Lưu trú", "Scouting"],
+};
+const buildDefaultCatalog = () => {
+  const items = [];
+  Object.entries(DEFAULT_CATALOG_ITEMS).forEach(([group, names]) => {
+    names.forEach((name) => items.push({ id: uid(), group, name }));
+  });
+  return items;
+};
+
 const STATUS_META = {
   "Chưa bắt đầu": { color: "#9C948A", icon: Circle },
   "Tiền kỳ": { color: "#3FA9A0", icon: Clock },
@@ -501,6 +520,7 @@ function normalizeData(d) {
     assignments: n.assignments || [],
     transactions: n.transactions || [],
     lineItems: n.lineItems || [],
+    catalog: n.catalog || buildDefaultCatalog(),
     _meta: n._meta || { updatedAt: new Date().toISOString() },
   };
 }
@@ -566,7 +586,7 @@ function useAppData() {
   }, []);
 
   const resetToSample = useCallback(async () => {
-    const seed = seedData();
+    const seed = normalizeData(seedData());
     seed._meta = { updatedAt: new Date().toISOString() };
     try {
       await window.storage.set(STORAGE_KEY, JSON.stringify(seed), false);
@@ -726,7 +746,7 @@ function LineItemForm({ initial, onSave, onClose }) {
   const [f, setF] = useState(initial || { name: "", contractValue: "", actualValue: "", paidAmount: "", notes: "" });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   return (
-    <Modal title={initial ? "Sửa hạng mục" : "Hạng mục mới"} onClose={onClose}>
+    <Modal title={initial && initial.id ? "Sửa hạng mục" : "Hạng mục mới"} onClose={onClose}>
       <Field label="Tên hạng mục">
         <input className="mv-input" list="mv-expense-category-list" value={f.name} onChange={set("name")} placeholder="VD: Thuê thiết bị, Quay phim, Thuê bối cảnh..." />
         <datalist id="mv-expense-category-list">
@@ -1117,6 +1137,63 @@ function MilestoneCalendar({ milestones, onEdit }) {
   );
 }
 
+/* ------------------------------ catalog panel (hạng mục mẫu) ------------------------------ */
+
+function CatalogPanel({ catalog, onPick, onAddCustom }) {
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newGroup, setNewGroup] = useState(CATALOG_GROUPS[0]);
+
+  const grouped = CATALOG_GROUPS.map((g) => ({ group: g, items: catalog.filter((c) => c.group === g) })).filter((g) => g.items.length > 0);
+
+  const handleDragStart = (e, item) => {
+    e.dataTransfer.setData("text/plain", JSON.stringify({ name: item.name }));
+    e.dataTransfer.effectAllowed = "copy";
+  };
+
+  return (
+    <div className="mv-catalog">
+      <div className="mv-catalog-hint">Kéo (hoặc bấm) một hạng mục bên dưới vào dự án để thêm nhanh:</div>
+      {grouped.map(({ group, items }) => (
+        <div key={group} className="mv-catalog-group">
+          <div className="mv-catalog-group-label">{group}</div>
+          <div className="mv-catalog-chips">
+            {items.map((item) => (
+              <button
+                key={item.id}
+                className="mv-catalog-chip"
+                draggable
+                onDragStart={(e) => handleDragStart(e, item)}
+                onClick={() => onPick(item)}
+              >
+                {item.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {showAddForm ? (
+        <div className="mv-catalog-add-form">
+          <input className="mv-input" placeholder="Tên hạng mục mới" value={newName} onChange={(e) => setNewName(e.target.value)} />
+          <select className="mv-input" value={newGroup} onChange={(e) => setNewGroup(e.target.value)}>
+            {CATALOG_GROUPS.map((g) => <option key={g}>{g}</option>)}
+          </select>
+          <button
+            className="mv-btn mv-btn-primary mv-btn-sm"
+            onClick={() => { if (newName.trim()) { onAddCustom({ group: newGroup, name: newName.trim() }); setNewName(""); setShowAddForm(false); } }}
+          >
+            Thêm
+          </button>
+          <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setShowAddForm(false)}>Huỷ</button>
+        </div>
+      ) : (
+        <button className="mv-catalog-add-trigger" onClick={() => setShowAddForm(true)}><Plus size={13} /> Hạng mục khác (không có sẵn)</button>
+      )}
+    </div>
+  );
+}
+
 function ProjectDetail({ data, persist, projectId, back }) {
   const project = data.projects.find((p) => p.id === projectId);
   const [tab, setTab] = useState("overview");
@@ -1128,8 +1205,6 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const [showMilestoneForm, setShowMilestoneForm] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState(null);
   const [showAssignForm, setShowAssignForm] = useState(false);
-  const [showTxnForm, setShowTxnForm] = useState(false);
-  const [editingTxn, setEditingTxn] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null);
 
   if (!project) {
@@ -1149,8 +1224,8 @@ function ProjectDetail({ data, persist, projectId, back }) {
 
   const thu = transactions.filter((t) => t.type === "Thu").reduce((s, t) => s + t.amount, 0);
   const chi = transactions.filter((t) => t.type === "Chi").reduce((s, t) => s + t.amount, 0);
-  const chiGoc = transactions.filter((t) => t.type === "Chi" && !t.isExtra).reduce((s, t) => s + t.amount, 0);
-  const chiPhatSinh = transactions.filter((t) => t.type === "Chi" && t.isExtra).reduce((s, t) => s + t.amount, 0);
+  const lineItemsActual = lineItems.reduce((s, l) => s + l.actualValue, 0);
+  const lineItemsDebt = lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0);
 
   const patchProject = (patch) => persist({ ...data, projects: data.projects.map((p) => (p.id === projectId ? { ...p, ...patch } : p)) });
 
@@ -1178,6 +1253,20 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const markLineItemPaid = (id, actualValue) => {
     persist({ ...data, lineItems: data.lineItems.map((l) => (l.id === id ? { ...l, paidAmount: actualValue } : l)) });
   };
+  const quickAddFromCatalog = (item) => {
+    setEditingLineItem({ name: item.name, contractValue: "", actualValue: "", paidAmount: "", notes: "" });
+    setShowLineItemForm(true);
+  };
+  const addCatalogItem = ({ group, name }) => {
+    persist({ ...data, catalog: [...data.catalog, { id: uid(), group, name }] });
+  };
+  const handleCatalogDrop = (e) => {
+    e.preventDefault();
+    try {
+      const parsed = JSON.parse(e.dataTransfer.getData("text/plain"));
+      if (parsed && parsed.name) quickAddFromCatalog(parsed);
+    } catch (err) {}
+  };
 
   const saveMilestone = (m) => {
     const next = { ...data };
@@ -1199,26 +1288,15 @@ function ProjectDetail({ data, persist, projectId, back }) {
     persist({ ...data, assignments: data.assignments.map((a) => (a.id === id ? { ...a, paidAmount } : a)) });
   };
 
-  const saveTxn = (t) => {
-    const next = { ...data };
-    next.transactions = t.id
-      ? data.transactions.map((x) => (x.id === t.id ? t : x))
-      : [...data.transactions, { ...t, id: uid(), projectId }];
-    persist(next);
-    setShowTxnForm(false);
-    setEditingTxn(null);
-  };
-  const deleteTxn = (id) => { persist({ ...data, transactions: data.transactions.filter((t) => t.id !== id) }); setConfirmRemove(null); };
 
   const assignedPersonnel = assignments.map((a) => ({ ...a, person: data.personnel.find((p) => p.id === a.personnelId) }));
   const availablePersonnel = data.personnel.filter((p) => !assignments.some((a) => a.personnelId === p.id));
 
   const TABS = [
     { id: "overview", label: "Tổng quan", icon: Film },
-    { id: "contract", label: "Hợp đồng", icon: FileText },
+    { id: "contract", label: "Dòng tiền", icon: Wallet },
     { id: "timeline", label: "Timeline", icon: Calendar },
     { id: "crew", label: "Nhân sự", icon: Users },
-    { id: "cashflow", label: "Dòng tiền", icon: Wallet },
   ];
 
   return (
@@ -1260,7 +1338,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
             </div>
             <div><div className="mv-detail-label">Ngân sách</div><div className="mv-detail-value">{fmtVND(project.budget)}</div></div>
             <div><div className="mv-detail-label">Thời gian</div><div className="mv-detail-value mv-mono-date">{fmtDate(project.startDate)} → {fmtDate(project.endDate)}</div></div>
-            <div><div className="mv-detail-label">Thu / Chi dự án</div><div className="mv-detail-value"><span style={{ color: "#5FB77E" }}>{fmtVND(thu)}</span> / <span style={{ color: "#C1443C" }}>{fmtVND(chi)}</span></div></div>
+            <div><div className="mv-detail-label">Thực chi / Còn nợ</div><div className="mv-detail-value"><span style={{ color: "#D4A537" }}>{fmtVND(lineItemsActual)}</span> / <span style={{ color: "#C1443C" }}>{fmtVND(lineItemsDebt)}</span></div></div>
           </div>
           {project.description && (
             <div style={{ marginTop: 16 }}>
@@ -1301,6 +1379,11 @@ function ProjectDetail({ data, persist, projectId, back }) {
         </div>
 
         <div className="mv-panel">
+          <h3 className="mv-panel-title"><Plus size={16} /> Danh mục hạng mục</h3>
+          <CatalogPanel catalog={data.catalog} onPick={quickAddFromCatalog} onAddCustom={addCatalogItem} />
+        </div>
+
+        <div className="mv-panel" onDragOver={(e) => e.preventDefault()} onDrop={handleCatalogDrop}>
           <div className="mv-panel-head">
             <h3 className="mv-panel-title"><Wallet size={16} /> Hạng mục chi phí theo hợp đồng</h3>
             <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingLineItem(null); setShowLineItemForm(true); }}><Plus size={14} /> Thêm hạng mục</button>
@@ -1448,48 +1531,6 @@ function ProjectDetail({ data, persist, projectId, back }) {
             );
           })}
           {showAssignForm && <AssignmentForm personnelList={availablePersonnel} onClose={() => setShowAssignForm(false)} onSave={saveAssignment} />}
-        </div>
-      )}
-
-      {tab === "cashflow" && (
-        <div className="mv-panel">
-          <div className="mv-panel-head">
-            <h3 className="mv-panel-title"><Wallet size={16} /> Dòng tiền dự án</h3>
-            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingTxn(null); setShowTxnForm(true); }}><Plus size={14} /> Thêm giao dịch</button>
-          </div>
-          <div className="mv-stats-row mv-stats-row-sm">
-            <StatCard label="Tổng thu" value={fmtVND(thu)} tone="#5FB77E" />
-            <StatCard label="Chi phí gốc" value={fmtVND(chiGoc)} tone="#C1443C" />
-            <StatCard label="Phát sinh" value={fmtVND(chiPhatSinh)} tone="#D4A537" sub={chi > 0 ? `${Math.round((chiPhatSinh / chi) * 100)}% tổng chi` : undefined} />
-            <StatCard label="Còn lại" value={fmtVND(thu - chi)} tone={thu - chi >= 0 ? "#D4A537" : "#C1443C"} />
-          </div>
-          {transactions.length === 0 && <p className="mv-empty-note">Chưa có giao dịch nào.</p>}
-          {transactions.map((t) => (
-            confirmRemove === t.id ? (
-              <ConfirmBar key={t.id} text="Xoá giao dịch này?" onConfirm={() => deleteTxn(t.id)} onCancel={() => setConfirmRemove(null)} />
-            ) : (
-              <div key={t.id} className="mv-row-card">
-                <div className="mv-row-txn-icon" style={{ color: t.type === "Thu" ? "#5FB77E" : "#C1443C" }}>
-                  {t.type === "Thu" ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div className="mv-row-title">
-                    {t.category || t.type} <span className="mv-mono-date">· {fmtDate(t.date)}</span>
-                    {t.isExtra && <span className="mv-extra-badge">Phát sinh</span>}
-                  </div>
-                  {t.description && <div className="mv-row-sub">{t.description}</div>}
-                </div>
-                <div className="mv-row-right">
-                  <span className="mv-mono-money" style={{ color: t.type === "Thu" ? "#5FB77E" : "#C1443C" }}>
-                    {t.type === "Thu" ? "+" : "-"}{fmtVND(t.amount)}
-                  </span>
-                  <button className="mv-icon-btn" onClick={() => { setEditingTxn(t); setShowTxnForm(true); }}><Pencil size={14} /></button>
-                  <button className="mv-icon-btn" onClick={() => setConfirmRemove(t.id)}><Trash2 size={14} /></button>
-                </div>
-              </div>
-            )
-          ))}
-          {showTxnForm && <TransactionForm initial={editingTxn} onClose={() => { setShowTxnForm(false); setEditingTxn(null); }} onSave={saveTxn} />}
         </div>
       )}
     </div>
@@ -2008,6 +2049,21 @@ const CSS = `
 .mv-lineitem-cols { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .mv-lineitem-col { display: flex; flex-direction: column; gap: 3px; }
 .mv-variance-note { display: block; font-size: 10px; color: var(--text-muted); font-weight: 500; }
+
+.mv-catalog { display: flex; flex-direction: column; gap: 12px; }
+.mv-catalog-hint { font-size: 12px; color: var(--text-muted); }
+.mv-catalog-group-label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; }
+.mv-catalog-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.mv-catalog-chip {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  border-radius: 20px; padding: 5px 12px; font-size: 12px; cursor: grab; font-family: inherit;
+}
+.mv-catalog-chip:hover { border-color: var(--gold); color: var(--gold); }
+.mv-catalog-chip:active { cursor: grabbing; }
+.mv-catalog-add-trigger { display: inline-flex; align-items: center; gap: 5px; background: none; border: 1px dashed var(--border); color: var(--text-muted); border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; font-family: inherit; align-self: flex-start; }
+.mv-catalog-add-trigger:hover { color: var(--gold); border-color: var(--gold); }
+.mv-catalog-add-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mv-catalog-add-form .mv-input { width: auto; flex: 1; min-width: 140px; }
 
 .mv-confirm { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: color-mix(in srgb, var(--red) 12%, var(--surface)); border: 1px solid var(--red); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; }
 .mv-confirm > span { flex: 1; }
