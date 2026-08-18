@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="theme-color" content="#14120F" />
-<title>Studios — Quản lý sản xuất MV</title>
+<title>GADA — Quản lý sản xuất MV</title>
 <link rel="manifest" href="./manifest.json" />
 <link rel="icon" href="./icon-192.png" />
 <link rel="apple-touch-icon" href="./icon-192.png" />
@@ -864,6 +864,7 @@ function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineC
             onEdit={(m) => { setEditingLocalMilestone(m); setShowLocalMilestoneForm(true); }}
             onAddOnDate={addOnDate}
             onMoveToDate={moveLocalMilestoneToDate}
+            onDelete={deleteLocalMilestone}
             timelineCatalog={timelineCatalog}
             projectName={f.name || "Dự án mới"}
           />
@@ -1581,7 +1582,7 @@ function TimelineCatalogPanel({ catalog, onAddCustomOneOff }) {
   );
 }
 
-function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, timelineCatalog, projectName }) {
+function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, onDelete, timelineCatalog, projectName }) {
   const todayKey = todayISO();
   const initialMonth = milestones.length > 0 ? new Date(milestones[0].date) : new Date();
   const [viewDate, setViewDate] = useState(new Date(initialMonth.getFullYear(), initialMonth.getMonth(), 1));
@@ -1673,17 +1674,27 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, time
                 <div className="mv-calendar-daynum">{d}</div>
                 <div className="mv-calendar-chips">
                   {dayMilestones.map((m) => (
-                    <button
-                      key={m.id}
-                      className="mv-calendar-chip mv-no-print-interactive"
-                      style={{ "--chip-color": STATUS_META[m.status]?.color || "#9C948A" }}
-                      draggable
-                      onDragStart={(e) => handleChipDragStart(e, m)}
-                      onClick={() => onEdit(m)}
-                      title={`${m.name} — kéo để đổi ngày`}
-                    >
-                      {m.name}
-                    </button>
+                    <div key={m.id} className="mv-calendar-chip-wrap">
+                      <button
+                        className="mv-calendar-chip mv-no-print-interactive"
+                        style={{ "--chip-color": STATUS_META[m.status]?.color || "#9C948A" }}
+                        draggable
+                        onDragStart={(e) => handleChipDragStart(e, m)}
+                        onClick={() => onEdit(m)}
+                        title={`${m.name} — kéo để đổi ngày`}
+                      >
+                        {m.name}
+                      </button>
+                      {onDelete && (
+                        <button
+                          className="mv-calendar-chip-delete mv-no-print"
+                          title="Xoá mốc này"
+                          onClick={(e) => { e.stopPropagation(); onDelete(m.id); }}
+                        >
+                          <X size={10} />
+                        </button>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -2013,7 +2024,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
           <div className="mv-print-only mv-print-header">
             <img src={LOGO_DATA_URI} alt="Logo" className="mv-print-logo" />
             <div>
-              <div className="mv-print-title">Bảng dự toán — {project.name}</div>
+              <div className="mv-print-title">QUOTATION — {project.name}</div>
               {project.client && <div className="mv-print-sub">Khách hàng: {project.client}</div>}
             </div>
           </div>
@@ -2081,7 +2092,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
                     })}
                   </tbody>
                 ))}
-                <tfoot>
+                <tbody className="mv-quote-totals-body">
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label">Tổng theo đơn giá</td>
                     <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(subtotal)}</td>
@@ -2112,7 +2123,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
                     <td className="mv-quote-amount-cell mv-mono-money mv-quote-total-value">{fmtVND(totalWithVat)}</td>
                     <td colSpan={4} className="mv-no-print"></td>
                   </tr>
-                </tfoot>
+                </tbody>
               </table>
               </>
             );
@@ -2139,6 +2150,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
               onEdit={(m) => { setEditingMilestone(m); setShowMilestoneForm(true); }}
               onAddOnDate={addMilestoneOnDate}
               onMoveToDate={moveMilestoneToDate}
+              onDelete={deleteMilestone}
               timelineCatalog={data.timelineCatalog}
               projectName={project.name}
             />
@@ -2789,6 +2801,15 @@ const CSS = `
   white-space: nowrap; font-family: inherit;
 }
 .mv-calendar-chip:active { cursor: grabbing; }
+.mv-calendar-chip-wrap { position: relative; }
+.mv-calendar-chip-wrap .mv-calendar-chip { padding-right: 16px; }
+.mv-calendar-chip-delete {
+  position: absolute; top: 2px; right: 2px; width: 13px; height: 13px; padding: 0;
+  display: none; align-items: center; justify-content: center; border: none; border-radius: 50%;
+  background: rgba(0,0,0,0.5); color: #fff; cursor: pointer;
+}
+.mv-calendar-chip-wrap:hover .mv-calendar-chip-delete { display: flex; }
+.mv-calendar-chip-delete:hover { background: var(--red); }
 
 .mv-lineitem-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 10px; background: var(--surface-2); }
 .mv-lineitem-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
@@ -2807,6 +2828,7 @@ const CSS = `
 .mv-quote-amount-cell { text-align: right; white-space: nowrap; font-weight: 600; }
 .mv-quote-total-label { text-align: right; font-weight: 700; font-family: 'Oswald', sans-serif; letter-spacing: 0.03em; text-transform: uppercase; font-size: 12.5px; padding-top: 12px; }
 .mv-quote-total-value { font-size: 15px; color: var(--gold); padding-top: 12px; }
+.mv-quote-totals-body { break-inside: avoid; page-break-inside: avoid; }
 .mv-print-sub { font-size: 12px; color: #444; margin-top: 2px; }
 
 .mv-catalog { display: flex; flex-direction: column; gap: 12px; }

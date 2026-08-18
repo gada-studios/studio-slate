@@ -1,6 +1,6 @@
 {
-  "name": "Studios — Quản lý sản xuất MV",
-  "short_name": "Studios",
+  "name": "GADA — Quản lý sản xuất MV",
+  "short_name": "GADA",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#14120F",
