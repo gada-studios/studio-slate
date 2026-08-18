@@ -177,6 +177,13 @@ const seedData = () => {
       { id: uid(), projectId: p2, type: "Thu", amount: 310000000, date: "2026-05-02", category: "Tạm ứng hợp đồng", description: "50% tạm ứng từ Việt Wave" },
       { id: uid(), projectId: p2, type: "Chi", amount: 90000000, date: "2026-06-12", category: "Thiết bị", description: "Thuê flycam & đèn LED" },
     ],
+    lineItems: [
+      { id: uid(), projectId: p1, name: "Quay phim (DOP + ê-kíp)", contractValue: 60000000, actualValue: 62000000, paidAmount: 30000000, notes: "" },
+      { id: uid(), projectId: p1, name: "Thuê bối cảnh Đà Lạt", contractValue: 40000000, actualValue: 45000000, paidAmount: 45000000, notes: "Phát sinh thêm 1 ngày quay" },
+      { id: uid(), projectId: p1, name: "Thuê thiết bị (flycam, đèn, gimbal)", contractValue: 35000000, actualValue: 32000000, paidAmount: 20000000, notes: "" },
+      { id: uid(), projectId: p2, name: "Kỹ xảo & hậu kỳ VFX", contractValue: 100000000, actualValue: 100000000, paidAmount: 60000000, notes: "" },
+      { id: uid(), projectId: p2, name: "Thuê thiết bị quay đêm", contractValue: 50000000, actualValue: 58000000, paidAmount: 58000000, notes: "Thêm đèn LED do bối cảnh rộng hơn dự kiến" },
+    ],
   };
 };
 
@@ -484,6 +491,20 @@ function useDriveSync(dataRef, applyRemoteData) {
 
 /* ------------------------------- app data hook -------------------------------- */
 
+function normalizeData(d) {
+  const n = d || {};
+  return {
+    projects: n.projects || [],
+    contracts: n.contracts || [],
+    milestones: n.milestones || [],
+    personnel: n.personnel || [],
+    assignments: n.assignments || [],
+    transactions: n.transactions || [],
+    lineItems: n.lineItems || [],
+    _meta: n._meta || { updatedAt: new Date().toISOString() },
+  };
+}
+
 function useAppData() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -492,9 +513,10 @@ function useAppData() {
   const dataRef = useRef(null);
 
   const applyRemoteData = useCallback((remote) => {
-    dataRef.current = remote;
-    setData(remote);
-    window.storage.set(STORAGE_KEY, JSON.stringify(remote), false).catch(() => {});
+    const normalized = normalizeData(remote);
+    dataRef.current = normalized;
+    setData(normalized);
+    window.storage.set(STORAGE_KEY, JSON.stringify(normalized), false).catch(() => {});
   }, []);
 
   const drive = useDriveSync(dataRef, applyRemoteData);
@@ -507,16 +529,16 @@ function useAppData() {
         const res = await window.storage.get(STORAGE_KEY, false);
         let initial;
         if (res && res.value) {
-          initial = JSON.parse(res.value);
+          initial = normalizeData(JSON.parse(res.value));
         } else {
-          initial = seedData();
+          initial = normalizeData(seedData());
           initial._meta = { updatedAt: new Date().toISOString() };
           await window.storage.set(STORAGE_KEY, JSON.stringify(initial), false);
         }
         dataRef.current = initial;
         setData(initial);
       } catch (e) {
-        const seed = seedData();
+        const seed = normalizeData(seedData());
         seed._meta = { updatedAt: new Date().toISOString() };
         dataRef.current = seed;
         setData(seed);
@@ -555,7 +577,7 @@ function useAppData() {
   }, []);
 
   const clearAll = useCallback(async () => {
-    const empty = { projects: [], contracts: [], milestones: [], personnel: [], assignments: [], transactions: [], _meta: { updatedAt: new Date().toISOString() } };
+    const empty = normalizeData({});
     try {
       await window.storage.set(STORAGE_KEY, JSON.stringify(empty), false);
     } catch (e) {}
@@ -693,6 +715,43 @@ function ContractForm({ initial, onSave, onClose }) {
       <div className="mv-modal-actions">
         <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
         <button className="mv-btn mv-btn-primary" onClick={() => f.contractNumber.trim() && onSave({ ...f, value: Number(f.value) || 0 })}>Lưu hợp đồng</button>
+      </div>
+    </Modal>
+  );
+}
+
+/* ------------------------------ form: line item (hạng mục) ------------------------------ */
+
+function LineItemForm({ initial, onSave, onClose }) {
+  const [f, setF] = useState(initial || { name: "", contractValue: "", actualValue: "", paidAmount: "", notes: "" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <Modal title={initial ? "Sửa hạng mục" : "Hạng mục mới"} onClose={onClose}>
+      <Field label="Tên hạng mục">
+        <input className="mv-input" list="mv-expense-category-list" value={f.name} onChange={set("name")} placeholder="VD: Thuê thiết bị, Quay phim, Thuê bối cảnh..." />
+        <datalist id="mv-expense-category-list">
+          {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c} />)}
+        </datalist>
+      </Field>
+      <div className="mv-form-grid">
+        <Field label="Giá trị theo hợp đồng (VND)"><input type="number" className="mv-input" value={f.contractValue} onChange={set("contractValue")} /></Field>
+        <Field label="Giá trị thực chi (VND)"><input type="number" className="mv-input" value={f.actualValue} onChange={set("actualValue")} placeholder="Để trống nếu chưa phát sinh" /></Field>
+        <Field label="Đã thanh toán (VND)"><input type="number" className="mv-input" value={f.paidAmount} onChange={set("paidAmount")} /></Field>
+      </div>
+      <Field label="Ghi chú"><textarea className="mv-input" rows={2} value={f.notes} onChange={set("notes")} placeholder="VD: lý do phát sinh, thoả thuận thêm..." /></Field>
+      <div className="mv-modal-actions">
+        <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
+        <button
+          className="mv-btn mv-btn-primary"
+          onClick={() => f.name.trim() && onSave({
+            ...f,
+            contractValue: Number(f.contractValue) || 0,
+            actualValue: f.actualValue === "" ? Number(f.contractValue) || 0 : Number(f.actualValue) || 0,
+            paidAmount: Number(f.paidAmount) || 0,
+          })}
+        >
+          Lưu hạng mục
+        </button>
       </div>
     </Modal>
   );
@@ -1064,6 +1123,8 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const [timelineView, setTimelineView] = useState("list");
   const [showContractForm, setShowContractForm] = useState(false);
   const [editingContract, setEditingContract] = useState(null);
+  const [showLineItemForm, setShowLineItemForm] = useState(false);
+  const [editingLineItem, setEditingLineItem] = useState(null);
   const [showMilestoneForm, setShowMilestoneForm] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState(null);
   const [showAssignForm, setShowAssignForm] = useState(false);
@@ -1081,6 +1142,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
   }
 
   const contracts = data.contracts.filter((c) => c.projectId === projectId);
+  const lineItems = data.lineItems.filter((l) => l.projectId === projectId);
   const milestones = data.milestones.filter((m) => m.projectId === projectId).sort((a, b) => new Date(a.date) - new Date(b.date));
   const assignments = data.assignments.filter((a) => a.projectId === projectId);
   const transactions = data.transactions.filter((t) => t.projectId === projectId).sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -1102,6 +1164,20 @@ function ProjectDetail({ data, persist, projectId, back }) {
     setEditingContract(null);
   };
   const deleteContract = (id) => { persist({ ...data, contracts: data.contracts.filter((c) => c.id !== id) }); setConfirmRemove(null); };
+
+  const saveLineItem = (l) => {
+    const next = { ...data };
+    next.lineItems = l.id
+      ? data.lineItems.map((x) => (x.id === l.id ? l : x))
+      : [...data.lineItems, { ...l, id: uid(), projectId }];
+    persist(next);
+    setShowLineItemForm(false);
+    setEditingLineItem(null);
+  };
+  const deleteLineItem = (id) => { persist({ ...data, lineItems: data.lineItems.filter((l) => l.id !== id) }); setConfirmRemove(null); };
+  const markLineItemPaid = (id, actualValue) => {
+    persist({ ...data, lineItems: data.lineItems.map((l) => (l.id === id ? { ...l, paidAmount: actualValue } : l)) });
+  };
 
   const saveMilestone = (m) => {
     const next = { ...data };
@@ -1196,6 +1272,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
       )}
 
       {tab === "contract" && (
+        <>
         <div className="mv-panel">
           <div className="mv-panel-head">
             <h3 className="mv-panel-title"><FileText size={16} /> Hợp đồng</h3>
@@ -1222,6 +1299,72 @@ function ProjectDetail({ data, persist, projectId, back }) {
           ))}
           {showContractForm && <ContractForm initial={editingContract} onClose={() => { setShowContractForm(false); setEditingContract(null); }} onSave={saveContract} />}
         </div>
+
+        <div className="mv-panel">
+          <div className="mv-panel-head">
+            <h3 className="mv-panel-title"><Wallet size={16} /> Hạng mục chi phí theo hợp đồng</h3>
+            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingLineItem(null); setShowLineItemForm(true); }}><Plus size={14} /> Thêm hạng mục</button>
+          </div>
+          {lineItems.length === 0 && <p className="mv-empty-note">Chưa có hạng mục nào. Thêm từng hạng mục theo hợp đồng (thuê thiết bị, bối cảnh, quay phim...) để theo dõi ngân sách và thực chi.</p>}
+          {lineItems.length > 0 && (
+            <div className="mv-stats-row mv-stats-row-sm">
+              <StatCard label="Theo hợp đồng" value={fmtVND(lineItems.reduce((s, l) => s + l.contractValue, 0))} />
+              <StatCard label="Thực chi" value={fmtVND(lineItems.reduce((s, l) => s + l.actualValue, 0))} tone="#D4A537" />
+              <StatCard label="Đã thanh toán" value={fmtVND(lineItems.reduce((s, l) => s + (l.paidAmount || 0), 0))} tone="#5FB77E" />
+              <StatCard label="Còn nợ" value={fmtVND(lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0))} tone="#C1443C" />
+            </div>
+          )}
+          {lineItems.map((l) => {
+            const debt = l.actualValue - (l.paidAmount || 0);
+            const variance = l.actualValue - l.contractValue;
+            return confirmRemove === l.id ? (
+              <ConfirmBar key={l.id} text={`Xoá hạng mục "${l.name}"?`} onConfirm={() => deleteLineItem(l.id)} onCancel={() => setConfirmRemove(null)} />
+            ) : (
+              <div key={l.id} className="mv-lineitem-card">
+                <div className="mv-lineitem-head">
+                  <div className="mv-row-title">{l.name}</div>
+                  <div className="mv-row-right">
+                    <button className="mv-icon-btn" onClick={() => { setEditingLineItem(l); setShowLineItemForm(true); }}><Pencil size={14} /></button>
+                    <button className="mv-icon-btn" onClick={() => setConfirmRemove(l.id)}><Trash2 size={14} /></button>
+                  </div>
+                </div>
+                <div className="mv-lineitem-cols">
+                  <div className="mv-lineitem-col">
+                    <div className="mv-detail-label">Theo hợp đồng</div>
+                    <div className="mv-mono-money">{fmtVND(l.contractValue)}</div>
+                  </div>
+                  <div className="mv-lineitem-col">
+                    <div className="mv-detail-label">Thực chi</div>
+                    <div className="mv-mono-money" style={{ color: variance > 0 ? "#C1443C" : variance < 0 ? "#5FB77E" : undefined }}>
+                      {fmtVND(l.actualValue)}
+                      {variance !== 0 && (
+                        <span className="mv-variance-note">{variance > 0 ? " +" : " "}{fmtVND(Math.abs(variance)).replace("₫", "")}{variance > 0 ? " so với HĐ" : " tiết kiệm"}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mv-lineitem-col">
+                    <div className="mv-detail-label">Đã thanh toán</div>
+                    <div className="mv-mono-money" style={{ color: "#5FB77E" }}>{fmtVND(l.paidAmount || 0)}</div>
+                  </div>
+                  <div className="mv-lineitem-col">
+                    <div className="mv-detail-label">Còn nợ</div>
+                    {debt > 0 ? (
+                      <div className="mv-debt-badge">{fmtVND(debt)}</div>
+                    ) : (
+                      <div className="mv-paid-badge">Đã trả đủ</div>
+                    )}
+                  </div>
+                </div>
+                {debt > 0 && (
+                  <button className="mv-btn mv-btn-ghost mv-btn-sm" style={{ marginTop: 8 }} onClick={() => markLineItemPaid(l.id, l.actualValue)}>Đánh dấu đã trả đủ</button>
+                )}
+                {l.notes && <div className="mv-row-sub" style={{ marginTop: 6 }}>Ghi chú: {l.notes}</div>}
+              </div>
+            );
+          })}
+          {showLineItemForm && <LineItemForm initial={editingLineItem} onClose={() => { setShowLineItemForm(false); setEditingLineItem(null); }} onSave={saveLineItem} />}
+        </div>
+        </>
       )}
 
       {tab === "timeline" && (
@@ -1860,6 +2003,12 @@ const CSS = `
   white-space: nowrap; font-family: inherit;
 }
 
+.mv-lineitem-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 10px; background: var(--surface-2); }
+.mv-lineitem-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.mv-lineitem-cols { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.mv-lineitem-col { display: flex; flex-direction: column; gap: 3px; }
+.mv-variance-note { display: block; font-size: 10px; color: var(--text-muted); font-weight: 500; }
+
 .mv-confirm { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: color-mix(in srgb, var(--red) 12%, var(--surface)); border: 1px solid var(--red); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; }
 .mv-confirm > span { flex: 1; }
 
@@ -1870,6 +2019,7 @@ const CSS = `
   .mv-sidebar-footer { display: none; }
   .mv-dash-grid, .mv-overview-grid, .mv-form-grid { grid-template-columns: 1fr; }
   .mv-stats-row { grid-template-columns: repeat(2, 1fr); }
+  .mv-lineitem-cols { grid-template-columns: repeat(2, 1fr); }
 }
 `;
 
