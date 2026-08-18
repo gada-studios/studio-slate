@@ -770,7 +770,7 @@ function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineC
   const [showLocalLineItemForm, setShowLocalLineItemForm] = useState(false);
   const [editingLocalLineItem, setEditingLocalLineItem] = useState(null);
   const quickAddLocalLineItem = (catalogItem) => {
-    setEditingLocalLineItem({ name: catalogItem.name, group: catalogItem.group || CATALOG_GROUPS[0], quantity: 1, unitPrice: "", contractValue: "", actualValue: "", paidAmount: "", notes: "" });
+    setEditingLocalLineItem({ name: catalogItem.name, group: catalogItem.group || CATALOG_GROUPS[0], quantity: 1, unitPrice: "", contractValue: "", extraAmount: "", paidAmount: "", notes: "" });
     setShowLocalLineItemForm(true);
   };
   const saveLocalLineItem = (l) => {
@@ -824,7 +824,6 @@ function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineC
               </select>
             </Field>
             <Field label="Tiến độ (%)"><input type="number" min="0" max="100" className="mv-input" value={f.progress} onChange={set("progress")} /></Field>
-            <Field label="Ngân sách (VND)"><input type="number" className="mv-input" value={f.budget} onChange={set("budget")} /></Field>
             <Field label="Ngày bắt đầu"><input type="date" className="mv-input" value={f.startDate} onChange={set("startDate")} /></Field>
             <Field label="Ngày kết thúc dự kiến"><input type="date" className="mv-input" value={f.endDate} onChange={set("endDate")} /></Field>
           </div>
@@ -958,13 +957,17 @@ function ContractForm({ initial, onSave, onClose }) {
 /* ------------------------------ form: line item (hạng mục) ------------------------------ */
 
 function LineItemForm({ initial, onSave, onClose }) {
-  const [f, setF] = useState(() =>
-    initial
-      ? { quantity: 1, unitPrice: initial.contractValue || 0, group: CATALOG_GROUPS[0], ...initial }
-      : { name: "", group: CATALOG_GROUPS[0], quantity: 1, unitPrice: "", contractValue: "", actualValue: "", paidAmount: "", notes: "" }
-  );
+  const [f, setF] = useState(() => {
+    if (initial) {
+      const contractValue = initial.contractValue || 0;
+      const extraAmount = initial.extraAmount != null ? initial.extraAmount : (initial.actualValue || 0) - contractValue;
+      return { quantity: 1, unitPrice: contractValue, group: CATALOG_GROUPS[0], ...initial, extraAmount };
+    }
+    return { name: "", group: CATALOG_GROUPS[0], quantity: 1, unitPrice: "", contractValue: "", extraAmount: "", paidAmount: "", notes: "" };
+  });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const computedContractValue = (Number(f.quantity) || 0) * (Number(f.unitPrice) || 0);
+  const computedActualValue = computedContractValue + (Number(f.extraAmount) || 0);
   return (
     <Modal title={initial && initial.id ? "Sửa hạng mục" : "Hạng mục mới"} onClose={onClose}>
       <div className="mv-form-grid">
@@ -983,12 +986,12 @@ function LineItemForm({ initial, onSave, onClose }) {
       <div className="mv-form-grid">
         <Field label="Số lượng"><input type="number" className="mv-input" value={f.quantity} onChange={set("quantity")} /></Field>
         <Field label="Đơn giá — dự toán gửi khách (VND)"><input type="number" className="mv-input" value={f.unitPrice} onChange={set("unitPrice")} /></Field>
-        <Field label="Theo hợp đồng (tự tính)"><input className="mv-input" value={fmtVND(computedContractValue)} disabled /></Field>
       </div>
       <div className="mv-form-grid">
-        <Field label="Giá trị thực chi (VND)"><input type="number" className="mv-input" value={f.actualValue} onChange={set("actualValue")} placeholder="Để trống nếu chưa phát sinh" /></Field>
-        <Field label="Đã thanh toán (VND)"><input type="number" className="mv-input" value={f.paidAmount} onChange={set("paidAmount")} /></Field>
+        <Field label="Phát sinh (VND)"><input type="number" className="mv-input" value={f.extraAmount} onChange={set("extraAmount")} placeholder="0 nếu không có phát sinh" /></Field>
+        <Field label="Thực chi (tự tính = dự toán + phát sinh)"><input className="mv-input" value={fmtVND(computedActualValue)} disabled /></Field>
       </div>
+      <Field label="Đã thanh toán (VND)"><input type="number" className="mv-input" value={f.paidAmount} onChange={set("paidAmount")} /></Field>
       <Field label="Ghi chú"><textarea className="mv-input" rows={2} value={f.notes} onChange={set("notes")} placeholder="VD: lý do phát sinh, thoả thuận thêm..." /></Field>
       <div className="mv-modal-actions">
         <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
@@ -999,7 +1002,8 @@ function LineItemForm({ initial, onSave, onClose }) {
             quantity: Number(f.quantity) || 1,
             unitPrice: Number(f.unitPrice) || 0,
             contractValue: computedContractValue,
-            actualValue: f.actualValue === "" ? computedContractValue : Number(f.actualValue) || 0,
+            extraAmount: Number(f.extraAmount) || 0,
+            actualValue: computedActualValue,
             paidAmount: Number(f.paidAmount) || 0,
           })}
         >
@@ -1629,6 +1633,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const chi = transactions.filter((t) => t.type === "Chi").reduce((s, t) => s + t.amount, 0);
   const lineItemsActual = lineItems.reduce((s, l) => s + l.actualValue, 0);
   const lineItemsDebt = lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0);
+  const lineItemsSubtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
   const clientTotal = contracts.reduce((s, c) => s + c.value, 0);
   const clientReceived = contracts.reduce((s, c) => s + (c.receivedAmount || 0), 0);
   const clientDebtTotal = clientTotal - clientReceived;
@@ -1661,7 +1666,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
     persist({ ...data, lineItems: data.lineItems.map((l) => (l.id === id ? { ...l, paidAmount: actualValue } : l)) });
   };
   const quickAddFromCatalog = (item) => {
-    setEditingLineItem({ name: item.name, group: item.group || CATALOG_GROUPS[0], quantity: 1, unitPrice: "", contractValue: "", actualValue: "", paidAmount: "", notes: "" });
+    setEditingLineItem({ name: item.name, group: item.group || CATALOG_GROUPS[0], quantity: 1, unitPrice: "", contractValue: "", extraAmount: "", paidAmount: "", notes: "" });
     setShowLineItemForm(true);
   };
   const handleCatalogDrop = (e) => {
@@ -1765,7 +1770,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
                 />
               </div>
             </div>
-            <div><div className="mv-detail-label">Ngân sách</div><div className="mv-detail-value">{fmtVND(project.budget)}</div></div>
+            <div><div className="mv-detail-label">Ngân sách <span className="mv-row-sub">(tự tính từ bảng chi phí, chưa VAT)</span></div><div className="mv-detail-value">{fmtVND(lineItemsSubtotal)}</div></div>
             <div><div className="mv-detail-label">Thời gian</div><div className="mv-detail-value mv-mono-date">{fmtDate(project.startDate)} → {fmtDate(project.endDate)}</div></div>
             <div><div className="mv-detail-label">Thực chi / Còn nợ</div><div className="mv-detail-value"><span style={{ color: "#D4A537" }}>{fmtVND(lineItemsActual)}</span> / <span style={{ color: "#C1443C" }}>{fmtVND(lineItemsDebt)}</span></div></div>
           </div>
@@ -1868,6 +1873,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
 
           {lineItems.length > 0 && (() => {
             const subtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
+            const totalExtra = lineItems.reduce((s, l) => s + (l.extraAmount || 0), 0);
             const vat = subtotal * 0.08;
             const totalWithVat = subtotal + vat;
             const grouped = CATALOG_GROUPS.map((g) => ({ group: g, items: lineItems.filter((l) => (l.group || "Miscellaneous") === g) }))
@@ -1876,8 +1882,8 @@ function ProjectDetail({ data, persist, projectId, back }) {
             return (
               <>
               <div className="mv-stats-row mv-stats-row-sm mv-no-print">
-                <StatCard label="Theo hợp đồng" value={fmtVND(subtotal)} />
                 <StatCard label="Thực chi" value={fmtVND(lineItems.reduce((s, l) => s + l.actualValue, 0))} tone="#D4A537" />
+                <StatCard label="Phát sinh" value={fmtVND(totalExtra)} tone={totalExtra > 0 ? "#C1443C" : undefined} />
                 <StatCard label="Đã thanh toán" value={fmtVND(lineItems.reduce((s, l) => s + (l.paidAmount || 0), 0))} tone="#5FB77E" />
                 <StatCard label="Còn nợ" value={fmtVND(lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0))} tone="#C1443C" />
               </div>
@@ -1888,7 +1894,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
                     <th>Hạng mục</th>
                     <th>SL</th>
                     <th>Đơn giá</th>
-                    <th>Theo hợp đồng</th>
+                    <th className="mv-no-print">Phát sinh</th>
                     <th className="mv-no-print">Thực chi</th>
                     <th className="mv-no-print">Đã TT</th>
                     <th className="mv-no-print">Còn nợ</th>
@@ -1909,7 +1915,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
                           <td>{l.name}{l.notes && <div className="mv-row-sub">{l.notes}</div>}</td>
                           <td className="mv-mono-date">{l.quantity || 1}</td>
                           <td className="mv-mono-money">{fmtVND(l.unitPrice || 0)}</td>
-                          <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(l.contractValue)}</td>
+                          <td className="mv-mono-money mv-no-print" style={{ color: (l.extraAmount || 0) > 0 ? "#C1443C" : undefined }}>{fmtVND(l.extraAmount || 0)}</td>
                           <td className="mv-mono-money mv-no-print">{fmtVND(l.actualValue)}</td>
                           <td className="mv-mono-money mv-no-print" style={{ color: "#5FB77E" }}>{fmtVND(l.paidAmount || 0)}</td>
                           <td className="mv-no-print">
@@ -1926,6 +1932,11 @@ function ProjectDetail({ data, persist, projectId, back }) {
                   </tbody>
                 ))}
                 <tfoot>
+                  <tr className="mv-no-print">
+                    <td colSpan={3} className="mv-quote-total-label">Tổng phát sinh</td>
+                    <td className="mv-mono-money" style={{ fontWeight: 700, color: totalExtra > 0 ? "#C1443C" : undefined }}>{fmtVND(totalExtra)}</td>
+                    <td colSpan={4}></td>
+                  </tr>
                   <tr className="mv-no-print">
                     <td colSpan={4} className="mv-quote-total-label">Tổng thực chi</td>
                     <td className="mv-mono-money" style={{ fontWeight: 700 }}>{fmtVND(lineItems.reduce((s, l) => s + l.actualValue, 0))}</td>
