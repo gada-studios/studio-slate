@@ -1,6 +1,6 @@
 {
-  "name": "Studio Slate — Quản lý sản xuất MV",
-  "short_name": "Studio Slate",
+  "name": "Studios — Quản lý sản xuất MV",
+  "short_name": "Studios",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#14120F",

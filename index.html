@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="theme-color" content="#14120F" />
-<title>Studio Slate — Quản lý sản xuất MV</title>
+<title>Studios — Quản lý sản xuất MV</title>
 <link rel="manifest" href="./manifest.json" />
 <link rel="icon" href="./icon-192.png" />
 <link rel="apple-touch-icon" href="./icon-192.png" />
@@ -89,6 +89,8 @@ const WifiOff = (p) => <Icon {...p}><line x1="1" y1="1" x2="23" y2="23"/><path d
 
 
 /* ---------------------------------- utils ---------------------------------- */
+
+const LOGO_DATA_URI = "data:image/png;base64,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";
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const STORAGE_KEY = "mv_studio_data_v1";
@@ -1255,7 +1257,10 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, timelineCatalog, o
       </div>
 
       <div className="mv-calendar" id="mv-printable-calendar">
-        <div className="mv-print-only mv-print-title">{projectName} — Timeline</div>
+        <div className="mv-print-only mv-print-header">
+          <img src={LOGO_DATA_URI} alt="Logo" className="mv-print-logo" />
+          <div className="mv-print-title">{projectName} — Timeline</div>
+        </div>
         <div className="mv-calendar-head">
           <button className="mv-icon-btn mv-no-print" onClick={() => goMonth(-1)}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /></button>
           <span className="mv-calendar-title">{MONTH_LABELS[month]} {year}</span>
@@ -1980,11 +1985,9 @@ function App() {
       <div className="mv-shell">
         <aside className="mv-sidebar">
           <div className="mv-brand">
-            <div className="mv-brand-mark">
-              <div className="mv-brand-stripe" /><div className="mv-brand-stripe" /><div className="mv-brand-stripe" />
-            </div>
+            <img src={LOGO_DATA_URI} alt="Logo công ty" className="mv-brand-logo" />
             <div>
-              <div className="mv-brand-title">STUDIO SLATE</div>
+              <div className="mv-brand-title">Studios</div>
               <div className="mv-brand-sub">Quản lý sản xuất MV</div>
             </div>
           </div>
@@ -2082,9 +2085,7 @@ const CSS = `
   display: flex; flex-direction: column; justify-content: space-between;
 }
 .mv-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; padding: 0 4px; }
-.mv-brand-mark { width: 30px; height: 30px; border: 2px solid var(--gold); border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; transform: rotate(-6deg); }
-.mv-brand-stripe { flex: 1; background: var(--gold); }
-.mv-brand-stripe:nth-child(2) { background: var(--bg); }
+.mv-brand-logo { height: 32px; width: auto; object-fit: contain; flex-shrink: 0; }
 .mv-brand-title { font-family: 'Oswald', sans-serif; font-weight: 600; letter-spacing: 0.06em; font-size: 14px; }
 .mv-brand-sub { font-size: 11px; color: var(--text-muted); }
 .mv-nav { display: flex; flex-direction: column; gap: 3px; }
@@ -2254,6 +2255,8 @@ const CSS = `
 .mv-calendar-cell-dragover { border-color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, var(--surface-2)); }
 .mv-calendar-toolbar { display: flex; justify-content: flex-end; margin-bottom: 10px; }
 .mv-print-only { display: none; }
+.mv-print-header { display: none; align-items: center; gap: 12px; }
+.mv-print-logo { height: 34px; width: auto; }
 .mv-calendar-daynum { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 3px; }
 .mv-calendar-cell-today .mv-calendar-daynum { color: var(--gold); font-weight: 700; }
 .mv-calendar-chips { display: flex; flex-direction: column; gap: 2px; }
@@ -2315,6 +2318,9 @@ const CSS = `
   #mv-printable-calendar { position: absolute; top: 0; left: 0; width: 100%; background: #fff; color: #111; border: none; }
   #mv-printable-calendar .mv-no-print { display: none !important; }
   #mv-printable-calendar .mv-print-only { display: block; font-family: 'Oswald', sans-serif; font-size: 20px; font-weight: 600; margin-bottom: 14px; color: #111; }
+  #mv-printable-calendar .mv-print-header { display: flex; margin-bottom: 16px; }
+  #mv-printable-calendar .mv-print-header .mv-print-title { margin-bottom: 0; }
+  #mv-printable-calendar .mv-print-logo { filter: invert(1); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   #mv-printable-calendar .mv-calendar-title { color: #111; }
   #mv-printable-calendar .mv-calendar-weekday { color: #555; }
   #mv-printable-calendar .mv-calendar-cell { border: 1px solid #ccc; background: #fff; break-inside: avoid; }
