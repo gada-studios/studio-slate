@@ -145,9 +145,21 @@ const buildDefaultCatalog = () => {
 // Non-destructively merges in any default catalog items the user doesn't
 // already have (by name), so existing custom items are always preserved.
 const ensureCatalogDefaults = (existing) => {
-  const existingNames = new Set(existing.map((i) => i.name));
-  const merged = [...existing];
-  buildDefaultCatalog().forEach((d) => { if (!existingNames.has(d.name)) merged.push(d); });
+  const defaults = buildDefaultCatalog();
+  const defaultsByName = new Map(defaults.map((d) => [d.name, d]));
+  // Migrate items still tagged with a stale/old group label (e.g. "SUP",
+  // "Logistics") over to their correct current group, so they show up under
+  // the right section instead of silently disappearing.
+  const migrated = existing.map((item) => {
+    const def = defaultsByName.get(item.name);
+    if (def && !CATALOG_GROUPS.includes(item.group)) {
+      return { ...item, group: def.group };
+    }
+    return item;
+  });
+  const existingNames = new Set(migrated.map((i) => i.name));
+  const merged = [...migrated];
+  defaults.forEach((d) => { if (!existingNames.has(d.name)) merged.push(d); });
   return merged;
 };
 
@@ -732,6 +744,9 @@ function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineC
   const addOnDate = (dateKey, name) => {
     setPendingMilestones((prev) => [...prev, { id: uid(), name, date: dateKey, status: "Chưa bắt đầu" }]);
   };
+  const moveLocalMilestoneToDate = (id, dateKey) => {
+    setPendingMilestones((prev) => prev.map((m) => (m.id === id ? { ...m, date: dateKey } : m)));
+  };
   const saveLocalMilestone = (m) => {
     setPendingMilestones((prev) => (m.id && prev.some((x) => x.id === m.id) ? prev.map((x) => (x.id === m.id ? m : x)) : [...prev, { ...m, id: uid() }]));
     setShowLocalMilestoneForm(false);
@@ -812,6 +827,7 @@ function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineC
             milestones={pendingMilestones}
             onEdit={(m) => { setEditingLocalMilestone(m); setShowLocalMilestoneForm(true); }}
             onAddOnDate={addOnDate}
+            onMoveToDate={moveLocalMilestoneToDate}
             timelineCatalog={timelineCatalog}
             projectName={f.name || "Dự án mới"}
           />
@@ -1398,7 +1414,7 @@ function TimelineCatalogPanel({ catalog, onAddCustomOneOff }) {
   );
 }
 
-function MilestoneCalendar({ milestones, onEdit, onAddOnDate, timelineCatalog, projectName }) {
+function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, timelineCatalog, projectName }) {
   const todayKey = todayISO();
   const initialMonth = milestones.length > 0 ? new Date(milestones[0].date) : new Date();
   const [viewDate, setViewDate] = useState(new Date(initialMonth.getFullYear(), initialMonth.getMonth(), 1));
@@ -1428,13 +1444,20 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, timelineCatalog, p
 
   const goMonth = (delta) => setViewDate(new Date(year, month + delta, 1));
 
+  const handleChipDragStart = (e, m) => {
+    e.dataTransfer.setData("text/plain", JSON.stringify({ type: "existing", id: m.id }));
+    e.dataTransfer.effectAllowed = "move";
+  };
+
   const handleDrop = (e, d) => {
     e.preventDefault();
     setDragOverDay(null);
     try {
       const parsed = JSON.parse(e.dataTransfer.getData("text/plain"));
-      if (parsed && parsed.name) {
-        const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      if (parsed && parsed.type === "existing" && parsed.id) {
+        onMoveToDate(parsed.id, dateKey);
+      } else if (parsed && parsed.name) {
         onAddOnDate(dateKey, parsed.name);
       }
     } catch (err) {}
@@ -1489,8 +1512,10 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, timelineCatalog, p
                       key={m.id}
                       className="mv-calendar-chip mv-no-print-interactive"
                       style={{ "--chip-color": STATUS_META[m.status]?.color || "#9C948A" }}
+                      draggable
+                      onDragStart={(e) => handleChipDragStart(e, m)}
                       onClick={() => onEdit(m)}
-                      title={m.name}
+                      title={`${m.name} — kéo để đổi ngày`}
                     >
                       {m.name}
                     </button>
@@ -1649,6 +1674,9 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const deleteMilestone = (id) => { persist({ ...data, milestones: data.milestones.filter((m) => m.id !== id) }); setConfirmRemove(null); };
   const addMilestoneOnDate = (dateKey, name) => {
     persist({ ...data, milestones: [...data.milestones, { id: uid(), projectId, name, date: dateKey, status: "Chưa bắt đầu" }] });
+  };
+  const moveMilestoneToDate = (id, dateKey) => {
+    persist({ ...data, milestones: data.milestones.map((m) => (m.id === id ? { ...m, date: dateKey } : m)) });
   };
   const addTimelineCatalogItem = ({ group, name }) => {
     persist({ ...data, timelineCatalog: [...data.timelineCatalog, { id: uid(), group, name }] });
@@ -1872,6 +1900,11 @@ function ProjectDetail({ data, persist, projectId, back }) {
                   </tbody>
                 ))}
                 <tfoot>
+                  <tr className="mv-no-print">
+                    <td colSpan={4} className="mv-quote-total-label">Tổng thực chi</td>
+                    <td className="mv-mono-money" style={{ fontWeight: 700 }}>{fmtVND(lineItems.reduce((s, l) => s + l.actualValue, 0))}</td>
+                    <td colSpan={3}></td>
+                  </tr>
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label">Tổng dự toán (chưa VAT)</td>
                     <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(subtotal)}</td>
@@ -1914,6 +1947,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
               milestones={milestones}
               onEdit={(m) => { setEditingMilestone(m); setShowMilestoneForm(true); }}
               onAddOnDate={addMilestoneOnDate}
+              onMoveToDate={moveMilestoneToDate}
               timelineCatalog={data.timelineCatalog}
               projectName={project.name}
             />
@@ -2219,7 +2253,7 @@ function App() {
           <div className="mv-brand">
             <img src={LOGO_DATA_URI} alt="Logo công ty" className="mv-brand-logo" />
             <div>
-              <div className="mv-brand-title">Studios</div>
+              <div className="mv-brand-title">Quản Lí Công Ty</div>
               <div className="mv-brand-sub">Quản lý sản xuất MV</div>
             </div>
           </div>
@@ -2316,8 +2350,8 @@ const CSS = `
   border-right: 1px solid var(--border); padding: 20px 14px;
   display: flex; flex-direction: column; justify-content: space-between;
 }
-.mv-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; padding: 0 4px; }
-.mv-brand-logo { height: 44px; width: auto; object-fit: contain; flex-shrink: 0; }
+.mv-brand { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin-bottom: 28px; padding: 0 4px; }
+.mv-brand-logo { width: 100%; max-width: 190px; height: auto; object-fit: contain; }
 .mv-brand-title { font-family: 'Oswald', sans-serif; font-weight: 600; letter-spacing: 0.06em; font-size: 14px; }
 .mv-brand-sub { font-size: 11px; color: var(--text-muted); }
 .mv-nav { display: flex; flex-direction: column; gap: 3px; }
