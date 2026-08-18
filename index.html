@@ -139,6 +139,26 @@ const buildDefaultCatalog = () => {
   return items;
 };
 
+const TIMELINE_CATALOG_GROUPS = ["Tiền kỳ", "Sản xuất", "Hậu kỳ"];
+const DEFAULT_TIMELINE_CATALOG_ITEMS = {
+  "Tiền kỳ": [
+    "Confirm job", "1st Treatment", "Revise Treatment", "Feedback", "Lock Treatment",
+    "Meeting", "Pre-production", "PPM", "Recce", "Scouting",
+  ],
+  "Sản xuất": ["Shooting"],
+  "Hậu kỳ": [
+    "Transcode", "1st Offline", "Revise Offline", "1st Online", "Revise Online",
+    "Still Frame Color", "Revise Color", "Lock Color", "Pack File", "Master File",
+  ],
+};
+const buildDefaultTimelineCatalog = () => {
+  const items = [];
+  Object.entries(DEFAULT_TIMELINE_CATALOG_ITEMS).forEach(([group, names]) => {
+    names.forEach((name) => items.push({ id: uid(), group, name }));
+  });
+  return items;
+};
+
 const STATUS_META = {
   "Chưa bắt đầu": { color: "#9C948A", icon: Circle },
   "Tiền kỳ": { color: "#3FA9A0", icon: Clock },
@@ -521,6 +541,7 @@ function normalizeData(d) {
     transactions: n.transactions || [],
     lineItems: n.lineItems || [],
     catalog: n.catalog || buildDefaultCatalog(),
+    timelineCatalog: n.timelineCatalog || buildDefaultTimelineCatalog(),
     _meta: n._meta || { updatedAt: new Date().toISOString() },
   };
 }
@@ -1068,10 +1089,59 @@ function ProjectsList({ data, persist, openProject }) {
 const WEEKDAY_LABELS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
 const MONTH_LABELS = ["Tháng 1", "Tháng 2", "Tháng 3", "Tháng 4", "Tháng 5", "Tháng 6", "Tháng 7", "Tháng 8", "Tháng 9", "Tháng 10", "Tháng 11", "Tháng 12"];
 
-function MilestoneCalendar({ milestones, onEdit }) {
+function TimelineCatalogPanel({ catalog, onAddCustom }) {
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newGroup, setNewGroup] = useState(TIMELINE_CATALOG_GROUPS[0]);
+
+  const grouped = TIMELINE_CATALOG_GROUPS.map((g) => ({ group: g, items: catalog.filter((c) => c.group === g) })).filter((g) => g.items.length > 0);
+
+  const handleDragStart = (e, item) => {
+    e.dataTransfer.setData("text/plain", JSON.stringify({ name: item.name }));
+    e.dataTransfer.effectAllowed = "copy";
+  };
+
+  return (
+    <div className="mv-catalog mv-no-print">
+      <div className="mv-catalog-hint">Kéo một hạng mục vào đúng ngày trên lịch bên dưới để thêm mốc tiến độ:</div>
+      {grouped.map(({ group, items }) => (
+        <div key={group} className="mv-catalog-group">
+          <div className="mv-catalog-group-label">{group}</div>
+          <div className="mv-catalog-chips">
+            {items.map((item) => (
+              <div key={item.id} className="mv-catalog-chip" draggable onDragStart={(e) => handleDragStart(e, item)}>
+                {item.name}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      {showAddForm ? (
+        <div className="mv-catalog-add-form">
+          <input className="mv-input" placeholder="Tên hạng mục mới" value={newName} onChange={(e) => setNewName(e.target.value)} />
+          <select className="mv-input" value={newGroup} onChange={(e) => setNewGroup(e.target.value)}>
+            {TIMELINE_CATALOG_GROUPS.map((g) => <option key={g}>{g}</option>)}
+          </select>
+          <button
+            className="mv-btn mv-btn-primary mv-btn-sm"
+            onClick={() => { if (newName.trim()) { onAddCustom({ group: newGroup, name: newName.trim() }); setNewName(""); setShowAddForm(false); } }}
+          >
+            Thêm
+          </button>
+          <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setShowAddForm(false)}>Huỷ</button>
+        </div>
+      ) : (
+        <button className="mv-catalog-add-trigger" onClick={() => setShowAddForm(true)}><Plus size={13} /> Hạng mục khác (không có sẵn)</button>
+      )}
+    </div>
+  );
+}
+
+function MilestoneCalendar({ milestones, onEdit, onAddOnDate, timelineCatalog, onAddCustomCatalogItem, projectName }) {
   const todayKey = todayISO();
   const initialMonth = milestones.length > 0 ? new Date(milestones[0].date) : new Date();
   const [viewDate, setViewDate] = useState(new Date(initialMonth.getFullYear(), initialMonth.getMonth(), 1));
+  const [dragOverDay, setDragOverDay] = useState(null);
 
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
@@ -1097,41 +1167,70 @@ function MilestoneCalendar({ milestones, onEdit }) {
 
   const goMonth = (delta) => setViewDate(new Date(year, month + delta, 1));
 
+  const handleDrop = (e, d) => {
+    e.preventDefault();
+    setDragOverDay(null);
+    try {
+      const parsed = JSON.parse(e.dataTransfer.getData("text/plain"));
+      if (parsed && parsed.name) {
+        const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        onAddOnDate(dateKey, parsed.name);
+      }
+    } catch (err) {}
+  };
+
+  const handlePrint = () => window.print();
+
   return (
-    <div className="mv-calendar">
-      <div className="mv-calendar-head">
-        <button className="mv-icon-btn" onClick={() => goMonth(-1)}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /></button>
-        <span className="mv-calendar-title">{MONTH_LABELS[month]} {year}</span>
-        <button className="mv-icon-btn" onClick={() => goMonth(1)}><ChevronRight size={16} /></button>
+    <div>
+      {timelineCatalog && <TimelineCatalogPanel catalog={timelineCatalog} onAddCustom={onAddCustomCatalogItem} />}
+
+      <div className="mv-calendar-toolbar mv-no-print">
+        <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={handlePrint}><FileText size={14} /> Tải PDF</button>
       </div>
-      <div className="mv-calendar-weekdays">
-        {WEEKDAY_LABELS.map((w) => <div key={w} className="mv-calendar-weekday">{w}</div>)}
-      </div>
-      <div className="mv-calendar-grid">
-        {cells.map((d, i) => {
-          if (d === null) return <div key={i} className="mv-calendar-cell mv-calendar-cell-blank" />;
-          const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-          const dayMilestones = milestonesByDay[d] || [];
-          const isToday = dateKey === todayKey;
-          return (
-            <div key={i} className={`mv-calendar-cell ${isToday ? "mv-calendar-cell-today" : ""}`}>
-              <div className="mv-calendar-daynum">{d}</div>
-              <div className="mv-calendar-chips">
-                {dayMilestones.map((m) => (
-                  <button
-                    key={m.id}
-                    className="mv-calendar-chip"
-                    style={{ "--chip-color": STATUS_META[m.status]?.color || "#9C948A" }}
-                    onClick={() => onEdit(m)}
-                    title={m.name}
-                  >
-                    {m.name}
-                  </button>
-                ))}
+
+      <div className="mv-calendar" id="mv-printable-calendar">
+        <div className="mv-print-only mv-print-title">{projectName} — Timeline</div>
+        <div className="mv-calendar-head">
+          <button className="mv-icon-btn mv-no-print" onClick={() => goMonth(-1)}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /></button>
+          <span className="mv-calendar-title">{MONTH_LABELS[month]} {year}</span>
+          <button className="mv-icon-btn mv-no-print" onClick={() => goMonth(1)}><ChevronRight size={16} /></button>
+        </div>
+        <div className="mv-calendar-weekdays">
+          {WEEKDAY_LABELS.map((w) => <div key={w} className="mv-calendar-weekday">{w}</div>)}
+        </div>
+        <div className="mv-calendar-grid">
+          {cells.map((d, i) => {
+            if (d === null) return <div key={i} className="mv-calendar-cell mv-calendar-cell-blank" />;
+            const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+            const dayMilestones = milestonesByDay[d] || [];
+            const isToday = dateKey === todayKey;
+            return (
+              <div
+                key={i}
+                className={`mv-calendar-cell ${isToday ? "mv-calendar-cell-today" : ""} ${dragOverDay === d ? "mv-calendar-cell-dragover" : ""}`}
+                onDragOver={(e) => { e.preventDefault(); setDragOverDay(d); }}
+                onDragLeave={() => setDragOverDay((cur) => (cur === d ? null : cur))}
+                onDrop={(e) => handleDrop(e, d)}
+              >
+                <div className="mv-calendar-daynum">{d}</div>
+                <div className="mv-calendar-chips">
+                  {dayMilestones.map((m) => (
+                    <button
+                      key={m.id}
+                      className="mv-calendar-chip mv-no-print-interactive"
+                      style={{ "--chip-color": STATUS_META[m.status]?.color || "#9C948A" }}
+                      onClick={() => onEdit(m)}
+                      title={m.name}
+                    >
+                      {m.name}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -1278,6 +1377,12 @@ function ProjectDetail({ data, persist, projectId, back }) {
     setEditingMilestone(null);
   };
   const deleteMilestone = (id) => { persist({ ...data, milestones: data.milestones.filter((m) => m.id !== id) }); setConfirmRemove(null); };
+  const addMilestoneOnDate = (dateKey, name) => {
+    persist({ ...data, milestones: [...data.milestones, { id: uid(), projectId, name, date: dateKey, status: "Chưa bắt đầu" }] });
+  };
+  const addTimelineCatalogItem = ({ group, name }) => {
+    persist({ ...data, timelineCatalog: [...data.timelineCatalog, { id: uid(), group, name }] });
+  };
 
   const saveAssignment = (a) => {
     persist({ ...data, assignments: [...data.assignments, { ...a, id: uid(), projectId }] });
@@ -1462,12 +1567,18 @@ function ProjectDetail({ data, persist, projectId, back }) {
               <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingMilestone(null); setShowMilestoneForm(true); }}><Plus size={14} /> Thêm mốc</button>
             </div>
           </div>
-          {milestones.length === 0 && <p className="mv-empty-note">Chưa có mốc tiến độ nào.</p>}
           {timelineView === "calendar" ? (
-            milestones.length > 0 && (
-              <MilestoneCalendar milestones={milestones} onEdit={(m) => { setEditingMilestone(m); setShowMilestoneForm(true); }} />
-            )
+            <MilestoneCalendar
+              milestones={milestones}
+              onEdit={(m) => { setEditingMilestone(m); setShowMilestoneForm(true); }}
+              onAddOnDate={addMilestoneOnDate}
+              timelineCatalog={data.timelineCatalog}
+              onAddCustomCatalogItem={addTimelineCatalogItem}
+              projectName={project.name}
+            />
           ) : (
+            <>
+            {milestones.length === 0 && <p className="mv-empty-note">Chưa có mốc tiến độ nào.</p>}
             <div className="mv-filmstrip">
               {milestones.map((m) => (
                 confirmRemove === m.id ? (
@@ -1486,6 +1597,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
                 )
               ))}
             </div>
+            </>
           )}
           {showMilestoneForm && <MilestoneForm initial={editingMilestone} onClose={() => { setShowMilestoneForm(false); setEditingMilestone(null); }} onSave={saveMilestone} />}
         </div>
@@ -2034,6 +2146,9 @@ const CSS = `
 .mv-calendar-cell { border: 1px solid var(--border); border-radius: 8px; padding: 5px; background: var(--surface-2); overflow: hidden; }
 .mv-calendar-cell-blank { border: none; background: none; }
 .mv-calendar-cell-today { border-color: var(--gold); }
+.mv-calendar-cell-dragover { border-color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, var(--surface-2)); }
+.mv-calendar-toolbar { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+.mv-print-only { display: none; }
 .mv-calendar-daynum { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 3px; }
 .mv-calendar-cell-today .mv-calendar-daynum { color: var(--gold); font-weight: 700; }
 .mv-calendar-chips { display: flex; flex-direction: column; gap: 2px; }
@@ -2076,6 +2191,20 @@ const CSS = `
   .mv-dash-grid, .mv-overview-grid, .mv-form-grid { grid-template-columns: 1fr; }
   .mv-stats-row { grid-template-columns: repeat(2, 1fr); }
   .mv-lineitem-cols { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media print {
+  body * { visibility: hidden; }
+  #mv-printable-calendar, #mv-printable-calendar * { visibility: visible; }
+  #mv-printable-calendar { position: absolute; top: 0; left: 0; width: 100%; background: #fff; color: #111; border: none; }
+  #mv-printable-calendar .mv-no-print { display: none !important; }
+  #mv-printable-calendar .mv-print-only { display: block; font-family: 'Oswald', sans-serif; font-size: 20px; font-weight: 600; margin-bottom: 14px; color: #111; }
+  #mv-printable-calendar .mv-calendar-title { color: #111; }
+  #mv-printable-calendar .mv-calendar-weekday { color: #555; }
+  #mv-printable-calendar .mv-calendar-cell { border: 1px solid #ccc; background: #fff; break-inside: avoid; }
+  #mv-printable-calendar .mv-calendar-daynum { color: #555; }
+  #mv-printable-calendar .mv-calendar-chip { color: #111; border-left-width: 3px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  @page { size: landscape; margin: 12mm; }
 }
 `;
 
