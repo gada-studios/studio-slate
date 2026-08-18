@@ -183,9 +183,9 @@ const seedData = () => {
       { id: p3, name: "Về Nhà Thôi", client: "Gia Đình Media", director: "Nguyễn Hải Đăng", status: "Chưa bắt đầu", progress: 0, startDate: "2026-09-01", endDate: "2026-11-01", budget: 300000000, description: "MV acoustic, quay tại Hội An." },
     ],
     contracts: [
-      { id: uid(), projectId: p1, contractNumber: "HD-2026-014", value: 450000000, signedDate: "2026-06-20", status: "Đã ký", paymentTerms: "30% tạm ứng - 40% giữa tiến độ - 30% nghiệm thu", notes: "" },
-      { id: uid(), projectId: p2, contractNumber: "HD-2026-011", value: 620000000, signedDate: "2026-04-28", status: "Đã ký", paymentTerms: "50% tạm ứng - 50% bàn giao", notes: "" },
-      { id: uid(), projectId: p3, contractNumber: "HD-2026-020", value: 300000000, signedDate: "", status: "Chờ ký", paymentTerms: "Đang thương lượng", notes: "Chờ khách duyệt kịch bản" },
+      { id: uid(), projectId: p1, contractNumber: "HD-2026-014", value: 450000000, receivedAmount: 135000000, signedDate: "2026-06-20", status: "Đã ký", paymentTerms: "30% tạm ứng - 40% giữa tiến độ - 30% nghiệm thu", notes: "" },
+      { id: uid(), projectId: p2, contractNumber: "HD-2026-011", value: 620000000, receivedAmount: 310000000, signedDate: "2026-04-28", status: "Đã ký", paymentTerms: "50% tạm ứng - 50% bàn giao", notes: "" },
+      { id: uid(), projectId: p3, contractNumber: "HD-2026-020", value: 300000000, receivedAmount: 0, signedDate: "", status: "Chờ ký", paymentTerms: "Đang thương lượng", notes: "Chờ khách duyệt kịch bản" },
     ],
     milestones: [
       { id: uid(), projectId: p1, name: "Chốt kịch bản & storyboard", date: "2026-07-05", status: "Hoàn thành" },
@@ -662,10 +662,11 @@ function ProgressBar({ value }) {
   );
 }
 
-function Modal({ title, onClose, children, wide }) {
+function Modal({ title, onClose, children, wide, size }) {
+  const sizeClass = size === "xl" ? "mv-modal-xl" : wide ? "mv-modal-wide" : "";
   return (
     <div className="mv-modal-overlay" onClick={onClose}>
-      <div className={`mv-modal ${wide ? "mv-modal-wide" : ""}`} onClick={(e) => e.stopPropagation()}>
+      <div className={`mv-modal ${sizeClass}`} onClick={(e) => e.stopPropagation()}>
         <div className="mv-modal-head">
           <h3>{title}</h3>
           <button className="mv-icon-btn" onClick={onClose}><X size={18} /></button>
@@ -699,13 +700,29 @@ function Field({ label, children }) {
 
 /* ------------------------------- form: project ------------------------------ */
 
-function ProjectForm({ initial, onSave, onClose }) {
+function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineCatalogItem }) {
   const [f, setF] = useState(
     initial || { name: "", client: "", director: "", status: "Chưa bắt đầu", progress: 0, startDate: todayISO(), endDate: "", budget: "", description: "" }
   );
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const isNew = !initial;
+  const [pendingMilestones, setPendingMilestones] = useState([]);
+  const [showLocalMilestoneForm, setShowLocalMilestoneForm] = useState(false);
+  const [editingLocalMilestone, setEditingLocalMilestone] = useState(null);
+
+  const addOnDate = (dateKey, name) => {
+    setPendingMilestones((prev) => [...prev, { id: uid(), name, date: dateKey, status: "Chưa bắt đầu" }]);
+  };
+  const saveLocalMilestone = (m) => {
+    setPendingMilestones((prev) => (m.id && prev.some((x) => x.id === m.id) ? prev.map((x) => (x.id === m.id ? m : x)) : [...prev, { ...m, id: uid() }]));
+    setShowLocalMilestoneForm(false);
+    setEditingLocalMilestone(null);
+  };
+  const deleteLocalMilestone = (id) => setPendingMilestones((prev) => prev.filter((m) => m.id !== id));
+
   return (
-    <Modal title={initial ? "Sửa dự án" : "Dự án mới"} onClose={onClose}>
+    <Modal title={initial ? "Sửa dự án" : "Dự án mới"} onClose={onClose} size={isNew ? "xl" : undefined}>
       <div className="mv-form-grid">
         <Field label="Tên dự án / MV"><input className="mv-input" value={f.name} onChange={set("name")} placeholder="VD: Cơn Mưa Ngang Qua" /></Field>
         <Field label="Khách hàng"><input className="mv-input" value={f.client} onChange={set("client")} /></Field>
@@ -721,11 +738,44 @@ function ProjectForm({ initial, onSave, onClose }) {
         <Field label="Ngày kết thúc dự kiến"><input type="date" className="mv-input" value={f.endDate} onChange={set("endDate")} /></Field>
       </div>
       <Field label="Mô tả"><textarea className="mv-input" rows={3} value={f.description} onChange={set("description")} /></Field>
+
+      {isNew && (
+        <div className="mv-inline-timeline-section">
+          <div className="mv-drive-divider" />
+          <h4 className="mv-inline-timeline-title"><Calendar size={15} /> Timeline dự án (tuỳ chọn — có thể thêm sau)</h4>
+          <MilestoneCalendar
+            milestones={pendingMilestones}
+            onEdit={(m) => { setEditingLocalMilestone(m); setShowLocalMilestoneForm(true); }}
+            onAddOnDate={addOnDate}
+            timelineCatalog={timelineCatalog}
+            onAddCustomCatalogItem={onAddTimelineCatalogItem}
+            projectName={f.name || "Dự án mới"}
+          />
+          {pendingMilestones.length > 0 && (
+            <div className="mv-inline-milestone-list">
+              {pendingMilestones.map((m) => (
+                <div key={m.id} className="mv-inline-milestone-chip">
+                  <span>{m.name} · {fmtDate(m.date)}</span>
+                  <button className="mv-icon-btn" onClick={() => deleteLocalMilestone(m.id)}><X size={12} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+          {showLocalMilestoneForm && (
+            <MilestoneForm
+              initial={editingLocalMilestone}
+              onClose={() => { setShowLocalMilestoneForm(false); setEditingLocalMilestone(null); }}
+              onSave={saveLocalMilestone}
+            />
+          )}
+        </div>
+      )}
+
       <div className="mv-modal-actions">
         <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
         <button
           className="mv-btn mv-btn-primary"
-          onClick={() => f.name.trim() && onSave({ ...f, progress: Number(f.progress) || 0, budget: Number(f.budget) || 0 })}
+          onClick={() => f.name.trim() && onSave({ ...f, progress: Number(f.progress) || 0, budget: Number(f.budget) || 0 }, pendingMilestones)}
         >
           Lưu dự án
         </button>
@@ -737,13 +787,14 @@ function ProjectForm({ initial, onSave, onClose }) {
 /* ------------------------------- form: contract ------------------------------ */
 
 function ContractForm({ initial, onSave, onClose }) {
-  const [f, setF] = useState(initial || { contractNumber: "", value: "", signedDate: "", status: "Chờ ký", paymentTerms: "", notes: "" });
+  const [f, setF] = useState(initial || { contractNumber: "", value: "", receivedAmount: "", signedDate: "", status: "Chờ ký", paymentTerms: "", notes: "" });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   return (
     <Modal title={initial ? "Sửa hợp đồng" : "Hợp đồng mới"} onClose={onClose}>
       <div className="mv-form-grid">
         <Field label="Số hợp đồng"><input className="mv-input" value={f.contractNumber} onChange={set("contractNumber")} /></Field>
-        <Field label="Giá trị (VND)"><input type="number" className="mv-input" value={f.value} onChange={set("value")} /></Field>
+        <Field label="Giá trị hợp đồng — khách phải trả (VND)"><input type="number" className="mv-input" value={f.value} onChange={set("value")} /></Field>
+        <Field label="Khách đã thanh toán (VND)"><input type="number" className="mv-input" value={f.receivedAmount} onChange={set("receivedAmount")} /></Field>
         <Field label="Ngày ký"><input type="date" className="mv-input" value={f.signedDate} onChange={set("signedDate")} /></Field>
         <Field label="Trạng thái">
           <select className="mv-input" value={f.status} onChange={set("status")}>
@@ -755,7 +806,7 @@ function ContractForm({ initial, onSave, onClose }) {
       <Field label="Ghi chú"><textarea className="mv-input" rows={2} value={f.notes} onChange={set("notes")} /></Field>
       <div className="mv-modal-actions">
         <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
-        <button className="mv-btn mv-btn-primary" onClick={() => f.contractNumber.trim() && onSave({ ...f, value: Number(f.value) || 0 })}>Lưu hợp đồng</button>
+        <button className="mv-btn mv-btn-primary" onClick={() => f.contractNumber.trim() && onSave({ ...f, value: Number(f.value) || 0, receivedAmount: Number(f.receivedAmount) || 0 })}>Lưu hợp đồng</button>
       </div>
     </Modal>
   );
@@ -1011,16 +1062,28 @@ function ProjectsList({ data, persist, openProject }) {
     return matchesQuery && matchesStatus;
   });
 
-  const saveProject = (proj) => {
+  const saveProject = (proj, pendingMilestones) => {
     const next = { ...data };
+    let newProjectId = proj.id;
     if (proj.id) {
       next.projects = data.projects.map((p) => (p.id === proj.id ? proj : p));
     } else {
-      next.projects = [...data.projects, { ...proj, id: uid() }];
+      newProjectId = uid();
+      next.projects = [...data.projects, { ...proj, id: newProjectId }];
+    }
+    if (pendingMilestones && pendingMilestones.length > 0) {
+      next.milestones = [
+        ...data.milestones,
+        ...pendingMilestones.map((m) => ({ ...m, id: uid(), projectId: newProjectId })),
+      ];
     }
     persist(next);
     setShowForm(false);
     setEditing(null);
+  };
+
+  const addTimelineCatalogItem = ({ group, name }) => {
+    persist({ ...data, timelineCatalog: [...data.timelineCatalog, { id: uid(), group, name }] });
   };
 
   const deleteProject = (id) => {
@@ -1078,6 +1141,8 @@ function ProjectsList({ data, persist, openProject }) {
           initial={editing}
           onClose={() => { setShowForm(false); setEditing(null); }}
           onSave={saveProject}
+          timelineCatalog={data.timelineCatalog}
+          onAddTimelineCatalogItem={addTimelineCatalogItem}
         />
       )}
     </div>
@@ -1325,6 +1390,10 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const chi = transactions.filter((t) => t.type === "Chi").reduce((s, t) => s + t.amount, 0);
   const lineItemsActual = lineItems.reduce((s, l) => s + l.actualValue, 0);
   const lineItemsDebt = lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0);
+  const clientTotal = contracts.reduce((s, c) => s + c.value, 0);
+  const clientReceived = contracts.reduce((s, c) => s + (c.receivedAmount || 0), 0);
+  const clientDebtTotal = clientTotal - clientReceived;
+  const profit = clientTotal - lineItemsActual;
 
   const patchProject = (patch) => persist({ ...data, projects: data.projects.map((p) => (p.id === projectId ? { ...p, ...patch } : p)) });
 
@@ -1456,30 +1525,65 @@ function ProjectDetail({ data, persist, projectId, back }) {
 
       {tab === "contract" && (
         <>
+        <div className="mv-panel mv-cashflow-summary">
+          <h3 className="mv-panel-title"><Wallet size={16} /> Tổng quan dòng tiền dự án</h3>
+          <div className="mv-cashflow-grid">
+            <div className="mv-cashflow-stat">
+              <div className="mv-detail-label">Khách phải trả</div>
+              <div className="mv-cashflow-value" style={{ color: "#3FA9A0" }}>{fmtVND(clientTotal)}</div>
+            </div>
+            <div className="mv-cashflow-stat">
+              <div className="mv-detail-label">Khách còn nợ</div>
+              <div className="mv-cashflow-value" style={{ color: clientDebtTotal > 0 ? "#C1443C" : "#5FB77E" }}>{fmtVND(clientDebtTotal)}</div>
+            </div>
+            <div className="mv-cashflow-stat">
+              <div className="mv-detail-label">Tổng thực chi</div>
+              <div className="mv-cashflow-value" style={{ color: "#D4A537" }}>{fmtVND(lineItemsActual)}</div>
+            </div>
+            <div className="mv-cashflow-stat">
+              <div className="mv-detail-label">Lợi nhuận (dự kiến)</div>
+              <div className="mv-cashflow-value" style={{ color: profit >= 0 ? "#5FB77E" : "#C1443C" }}>{fmtVND(profit)}</div>
+            </div>
+            <div className="mv-cashflow-stat">
+              <div className="mv-detail-label">Công ty còn nợ hạng mục</div>
+              <div className="mv-cashflow-value" style={{ color: lineItemsDebt > 0 ? "#C1443C" : "#5FB77E" }}>{fmtVND(lineItemsDebt)}</div>
+            </div>
+          </div>
+        </div>
+
         <div className="mv-panel">
           <div className="mv-panel-head">
             <h3 className="mv-panel-title"><FileText size={16} /> Hợp đồng</h3>
             <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingContract(null); setShowContractForm(true); }}><Plus size={14} /> Thêm hợp đồng</button>
           </div>
           {contracts.length === 0 && <p className="mv-empty-note">Chưa có hợp đồng nào cho dự án này.</p>}
-          {contracts.map((c) => (
-            confirmRemove === c.id ? (
+          {contracts.map((c) => {
+            const clientDebt = c.value - (c.receivedAmount || 0);
+            return confirmRemove === c.id ? (
               <ConfirmBar key={c.id} text={`Xoá hợp đồng ${c.contractNumber}?`} onConfirm={() => deleteContract(c.id)} onCancel={() => setConfirmRemove(null)} />
             ) : (
-              <div key={c.id} className="mv-row-card">
+              <div key={c.id} className="mv-row-card mv-row-card-wrap">
                 <div>
                   <div className="mv-row-title">{c.contractNumber} <Badge status={c.status} /></div>
                   <div className="mv-row-sub">Ký ngày {fmtDate(c.signedDate)} · {c.paymentTerms || "Chưa có điều khoản thanh toán"}</div>
                   {c.notes && <div className="mv-row-sub">Ghi chú: {c.notes}</div>}
                 </div>
-                <div className="mv-row-right">
-                  <span className="mv-mono-money">{fmtVND(c.value)}</span>
-                  <button className="mv-icon-btn" onClick={() => { setEditingContract(c); setShowContractForm(true); }}><Pencil size={14} /></button>
-                  <button className="mv-icon-btn" onClick={() => setConfirmRemove(c.id)}><Trash2 size={14} /></button>
+                <div className="mv-row-right mv-assignment-pay">
+                  <div className="mv-assignment-pay-nums">
+                    <span className="mv-mono-money">{fmtVND(c.value)}</span>
+                    <span className="mv-row-sub">đã thu {fmtVND(c.receivedAmount || 0)}</span>
+                    <span className={clientDebt > 0 ? "mv-debt-badge" : "mv-paid-badge"}>
+                      {clientDebt > 0 ? `Khách còn nợ ${fmtVND(clientDebt)}` : "Đã thu đủ"}
+                    </span>
+                  </div>
+                  <div>
+                    <button className="mv-icon-btn" onClick={() => { setEditingContract(c); setShowContractForm(true); }}><Pencil size={14} /></button>
+                    <button className="mv-icon-btn" onClick={() => setConfirmRemove(c.id)}><Trash2 size={14} /></button>
+                  </div>
                 </div>
               </div>
-            )
-          ))}
+            );
+          })}
           {showContractForm && <ContractForm initial={editingContract} onClose={() => { setShowContractForm(false); setEditingContract(null); }} onSave={saveContract} />}
         </div>
 
@@ -2119,6 +2223,7 @@ const CSS = `
 .mv-modal-overlay { position: fixed; inset: 0; background: rgba(10,9,7,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
 .mv-modal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; width: 420px; max-width: 100%; max-height: 85vh; overflow-y: auto; }
 .mv-modal-wide { width: 560px; }
+.mv-modal-xl { width: 860px; }
 .mv-modal-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--border); }
 .mv-modal-head h3 { margin: 0; font-family: 'Oswald', sans-serif; font-size: 16px; font-weight: 600; }
 .mv-modal-body { padding: 18px; }
@@ -2180,6 +2285,16 @@ const CSS = `
 .mv-catalog-add-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .mv-catalog-add-form .mv-input { width: auto; flex: 1; min-width: 140px; }
 
+.mv-cashflow-summary { background: linear-gradient(135deg, var(--surface), var(--surface-2)); border-color: var(--gold); }
+.mv-cashflow-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-top: 4px; }
+.mv-cashflow-stat { display: flex; flex-direction: column; gap: 4px; }
+.mv-cashflow-value { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 700; }
+
+.mv-inline-timeline-section { margin-top: 8px; }
+.mv-inline-timeline-title { display: flex; align-items: center; gap: 7px; font-family: 'Oswald', sans-serif; font-size: 13px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); margin: 4px 0 12px; }
+.mv-inline-milestone-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.mv-inline-milestone-chip { display: flex; align-items: center; gap: 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 20px; padding: 4px 6px 4px 12px; font-size: 12px; }
+
 .mv-confirm { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: color-mix(in srgb, var(--red) 12%, var(--surface)); border: 1px solid var(--red); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; }
 .mv-confirm > span { flex: 1; }
 
@@ -2191,6 +2306,7 @@ const CSS = `
   .mv-dash-grid, .mv-overview-grid, .mv-form-grid { grid-template-columns: 1fr; }
   .mv-stats-row { grid-template-columns: repeat(2, 1fr); }
   .mv-lineitem-cols { grid-template-columns: repeat(2, 1fr); }
+  .mv-cashflow-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media print {
