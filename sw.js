@@ -37,7 +37,7 @@ self.addEventListener("activate", (event) => {
 
 // Never intercept Google (Identity Services / Drive API / OAuth) requests —
 // those must always go straight to the network untouched.
-const BYPASS_HOSTS = ["googleapis.com", "accounts.google.com", "google.com"];
+const BYPASS_HOSTS = ["googleapis.com", "accounts.google.com", "google.com", "supabase.co"];
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);

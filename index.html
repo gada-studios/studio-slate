@@ -264,237 +264,107 @@ const seedData = () => {
 
 /* ------------------------------- constants --------------------------------- */
 
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
-const DRIVE_FILE_NAME = "studio-slate-data.json";
-const LS_CLIENT_ID = "mv_google_client_id";
-const LS_CONNECTED = "mv_drive_connected";
-const LS_FILE_ID = "mv_drive_file_id";
+const LS_SB_URL = "mv_supabase_url";
+const LS_SB_KEY = "mv_supabase_key";
+const SB_TABLE = "app_data";
 
-/* ------------------------------- drive sync ---------------------------------- */
-/* Thin wrapper around Google Identity Services (token client) + Drive v3 REST
-   API, using the drive.file scope (app only ever sees files it created). */
+/* ------------------------------- supabase sync ---------------------------------- */
+/* Email/password auth + a single JSONB row per user, via Supabase's client-side
+   SDK (loaded from CDN). Replaces the old Google Drive OAuth flow with a plain
+   login that works the same way on every device. */
 
-function loadGoogleScript() {
+function loadSupabaseScript() {
   return new Promise((resolve, reject) => {
-    if (window.google && window.google.accounts && window.google.accounts.oauth2) {
-      resolve();
-      return;
-    }
-    const existing = document.getElementById("mv-gsi-script");
+    if (window.supabase && window.supabase.createClient) { resolve(); return; }
+    const existing = document.getElementById("mv-supabase-script");
     if (existing) {
       existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () => reject(new Error("Không tải được Google Identity Services")));
+      existing.addEventListener("error", () => reject(new Error("Không tải được thư viện Supabase")));
       return;
     }
     const s = document.createElement("script");
-    s.id = "mv-gsi-script";
-    s.src = "https://accounts.google.com/gsi/client";
+    s.id = "mv-supabase-script";
+    s.src = "https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js";
     s.async = true;
     s.onload = () => resolve();
-    s.onerror = () => reject(new Error("Không tải được Google Identity Services"));
+    s.onerror = () => reject(new Error("Không tải được thư viện Supabase"));
     document.head.appendChild(s);
   });
 }
 
-function useDriveSync(dataRef, applyRemoteData) {
-  const [clientId, setClientId] = useState(() => localStorage.getItem(LS_CLIENT_ID) || "");
-  const [status, setStatus] = useState("disconnected"); // disconnected | connecting | syncing | synced | offline | error | conflict
-  const [lastSyncedAt, setLastSyncedAt] = useState(null);
-  const [errorMsg, setErrorMsg] = useState("");
-  const [conflict, setConflict] = useState(null); // { local, remote }
+function useSupabaseSync(dataRef, applyRemoteData) {
+  const [supabaseUrl, setSupabaseUrlState] = useState(() => localStorage.getItem(LS_SB_URL) || "");
+  const [supabaseKey, setSupabaseKeyState] = useState(() => localStorage.getItem(LS_SB_KEY) || "");
   const [scriptReady, setScriptReady] = useState(false);
   const [scriptError, setScriptError] = useState(false);
-  const [reloadNonce, setReloadNonce] = useState(0);
-  const tokenClientRef = useRef(null);
-  const tokenClientForIdRef = useRef("");
-  const accessTokenRef = useRef("");
-  const fileIdRef = useRef(localStorage.getItem(LS_FILE_ID) || "");
+  const [status, setStatus] = useState("disconnected"); // disconnected|connecting|syncing|synced|offline|error|conflict
+  const [user, setUser] = useState(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [conflict, setConflict] = useState(null);
+  const clientRef = useRef(null);
   const pushTimer = useRef(null);
   const pendingPushRef = useRef(false);
 
-  const saveClientId = (id) => {
-    localStorage.setItem(LS_CLIENT_ID, id.trim());
-    setClientId(id.trim());
+  const saveCredentials = (url, key) => {
+    localStorage.setItem(LS_SB_URL, url.trim());
+    localStorage.setItem(LS_SB_KEY, key.trim());
+    setSupabaseUrlState(url.trim());
+    setSupabaseKeyState(key.trim());
   };
 
-  // Preload the Google Identity Services script + create the token client as
-  // soon as we have a Client ID, so that later, when the user actually clicks
-  // "Kết nối", requestAccessToken() runs synchronously inside the click
-  // handler (no pending network/script load in between) — otherwise browsers
-  // silently block the popup because the click's "user gesture" has expired.
+  // (Re)create the Supabase client whenever credentials change.
   useEffect(() => {
-    if (!clientId) { setScriptReady(false); setScriptError(false); return; }
+    if (!supabaseUrl || !supabaseKey) { setScriptReady(false); return; }
     let cancelled = false;
     setScriptReady(false);
     setScriptError(false);
-    loadGoogleScript()
+    loadSupabaseScript()
       .then(() => {
         if (cancelled) return;
-        if (tokenClientForIdRef.current !== clientId) {
-          tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
-            client_id: clientId,
-            scope: DRIVE_SCOPE,
-            callback: () => {},
-          });
-          tokenClientForIdRef.current = clientId;
-        }
+        clientRef.current = window.supabase.createClient(supabaseUrl, supabaseKey, {
+          auth: { persistSession: true, autoRefreshToken: true },
+        });
         setScriptReady(true);
       })
-      .catch(() => { if (!cancelled) { setScriptReady(false); setScriptError(true); } });
+      .catch(() => { if (!cancelled) setScriptError(true); });
     return () => { cancelled = true; };
-  }, [clientId, reloadNonce]);
+  }, [supabaseUrl, supabaseKey]);
 
-  const retryScriptLoad = useCallback(() => setReloadNonce((n) => n + 1), []);
+  const fetchRemoteRow = useCallback(async (uid) => {
+    const { data, error } = await clientRef.current
+      .from(SB_TABLE)
+      .select("data, updated_at")
+      .eq("user_id", uid)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  }, []);
 
-  const ensureTokenClient = useCallback(async () => {
-    if (!clientId) throw new Error("Chưa có Client ID.");
-    if (tokenClientForIdRef.current === clientId && tokenClientRef.current) {
-      return tokenClientRef.current;
-    }
-    await loadGoogleScript();
-    if (tokenClientForIdRef.current !== clientId) {
-      tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: DRIVE_SCOPE,
-        callback: () => {},
-      });
-      tokenClientForIdRef.current = clientId;
-    }
-    return tokenClientRef.current;
-  }, [clientId]);
+  const pushToRemote = useCallback(async (uid, payload) => {
+    const { error } = await clientRef.current
+      .from(SB_TABLE)
+      .upsert({ user_id: uid, data: payload, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+    if (error) throw error;
+  }, []);
 
-  const requestToken = useCallback((interactive) => {
-    return new Promise((resolve, reject) => {
-      // Synchronous fast path: token client already warmed up, so this call
-      // to requestAccessToken happens directly inside the caller's click
-      // handler stack, preserving the browser's "real click" permission.
-      if (tokenClientForIdRef.current === clientId && tokenClientRef.current) {
-        const tc = tokenClientRef.current;
-        tc.callback = (resp) => {
-          if (resp.error) reject(new Error(resp.error));
-          else { accessTokenRef.current = resp.access_token; resolve(resp.access_token); }
-        };
-        tc.requestAccessToken({ prompt: interactive ? "consent" : "" });
-        return;
-      }
-      // Fallback (script not preloaded yet): may be blocked as a popup on
-      // some browsers since it involves an await first.
-      (async () => {
-        try {
-          const tc = await ensureTokenClient();
-          tc.callback = (resp) => {
-            if (resp.error) reject(new Error(resp.error));
-            else { accessTokenRef.current = resp.access_token; resolve(resp.access_token); }
-          };
-          tc.requestAccessToken({ prompt: interactive ? "consent" : "" });
-        } catch (e) {
-          reject(e);
-        }
-      })();
-    });
-  }, [ensureTokenClient, clientId]);
-
-  const driveFetch = useCallback(async (url, opts = {}, retry = true) => {
-    const token = accessTokenRef.current;
-    const res = await fetch(url, {
-      ...opts,
-      headers: { ...(opts.headers || {}), Authorization: "Bearer " + token },
-    });
-    if (res.status === 401 && retry) {
-      await requestToken(false);
-      return driveFetch(url, opts, false);
-    }
-    return res;
-  }, [requestToken]);
-
-  const findRemoteFile = useCallback(async () => {
-    const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
-    const res = await driveFetch(
-      `https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,modifiedTime)`
-    );
-    if (!res.ok) throw new Error("Không truy vấn được Google Drive.");
-    const json = await res.json();
-    return json.files && json.files[0] ? json.files[0] : null;
-  }, [driveFetch]);
-
-  const downloadRemote = useCallback(async (fileId) => {
-    const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
-    if (!res.ok) throw new Error("Không tải được dữ liệu từ Drive.");
-    return res.json();
-  }, [driveFetch]);
-
-  const createRemoteFile = useCallback(async (payload) => {
-    const boundary = "mvboundary" + Date.now();
-    const metadata = { name: DRIVE_FILE_NAME, mimeType: "application/json" };
-    const body =
-      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
-      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(payload)}\r\n--${boundary}--`;
-    const res = await driveFetch(
-      "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
-      { method: "POST", headers: { "Content-Type": `multipart/related; boundary=${boundary}` }, body }
-    );
-    if (!res.ok) throw new Error("Không tạo được file trên Drive.");
-    const json = await res.json();
-    return json.id;
-  }, [driveFetch]);
-
-  const updateRemoteFile = useCallback(async (fileId, payload) => {
-    const res = await driveFetch(
-      `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
-      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
-    );
-    if (!res.ok) throw new Error("Không lưu được dữ liệu lên Drive.");
-  }, [driveFetch]);
-
-  const pushToDrive = useCallback(async (payload) => {
-    if (!fileIdRef.current) {
-      const found = await findRemoteFile();
-      if (found) fileIdRef.current = found.id;
-      else fileIdRef.current = await createRemoteFile(payload);
-      localStorage.setItem(LS_FILE_ID, fileIdRef.current);
-      return;
-    }
-    await updateRemoteFile(fileIdRef.current, payload);
-  }, [findRemoteFile, createRemoteFile, updateRemoteFile]);
-
-  const schedulePush = useCallback((payload) => {
-    pendingPushRef.current = true;
-    if (pushTimer.current) clearTimeout(pushTimer.current);
-    pushTimer.current = setTimeout(async () => {
-      if (status === "disconnected" || !accessTokenRef.current) { pendingPushRef.current = false; return; }
-      if (!navigator.onLine) { setStatus("offline"); return; }
-      setStatus("syncing");
-      try {
-        await pushToDrive(payload);
-        pendingPushRef.current = false;
-        setStatus("synced");
-        setLastSyncedAt(new Date());
-      } catch (e) {
-        setErrorMsg(e.message || "Lỗi đồng bộ");
-        setStatus(navigator.onLine ? "error" : "offline");
-      }
-    }, 1500);
-  }, [pushToDrive, status]);
-
-  const connect = useCallback(async (interactive = true) => {
+  const afterLogin = useCallback(async (loggedInUser) => {
     setStatus("connecting");
     setErrorMsg("");
     try {
-      await requestToken(interactive);
-      const found = await findRemoteFile();
+      const row = await fetchRemoteRow(loggedInUser.id);
       const local = dataRef.current;
       const localUpdatedAt = local && local._meta ? local._meta.updatedAt : null;
+      const localHasRealData = local && local.projects && local.projects.length > 0;
 
-      if (found) {
-        fileIdRef.current = found.id;
-        localStorage.setItem(LS_FILE_ID, found.id);
-        const remote = await downloadRemote(found.id);
-        const remoteUpdatedAt = remote && remote._meta ? remote._meta.updatedAt : found.modifiedTime;
-        const localHasRealData = local && local.projects && local.projects.length > 0;
+      if (!row) {
+        await pushToRemote(loggedInUser.id, local);
+      } else {
+        const remote = row.data;
+        const remoteUpdatedAt = remote && remote._meta ? remote._meta.updatedAt : row.updated_at;
         const remoteHasRealData = remote && remote.projects && remote.projects.length > 0;
-
         if (!remoteHasRealData) {
-          await pushToDrive(local);
+          await pushToRemote(loggedInUser.id, local);
         } else if (!localHasRealData) {
           applyRemoteData(remote);
         } else if (localUpdatedAt && remoteUpdatedAt && new Date(localUpdatedAt).getTime() === new Date(remoteUpdatedAt).getTime()) {
@@ -502,29 +372,84 @@ function useDriveSync(dataRef, applyRemoteData) {
         } else {
           setConflict({ local, remote });
           setStatus("conflict");
-          localStorage.setItem(LS_CONNECTED, "1");
           return;
         }
-      } else {
-        await pushToDrive(local);
       }
-      localStorage.setItem(LS_CONNECTED, "1");
       setStatus("synced");
       setLastSyncedAt(new Date());
     } catch (e) {
-      setErrorMsg(e.message || "Không kết nối được Google Drive");
+      setErrorMsg(e.message || "Không đồng bộ được dữ liệu");
       setStatus("error");
     }
-  }, [requestToken, findRemoteFile, downloadRemote, pushToDrive, applyRemoteData, dataRef]);
+  }, [fetchRemoteRow, pushToRemote, applyRemoteData, dataRef]);
+
+  // Restore an existing session on load, and react to future sign-in/out.
+  useEffect(() => {
+    if (!scriptReady) return;
+    const client = clientRef.current;
+    let unsub = () => {};
+    client.auth.getSession().then(({ data }) => {
+      if (data.session) {
+        setUser(data.session.user);
+        afterLogin(data.session.user);
+      }
+    });
+    const { data: sub } = client.auth.onAuthStateChange((event, session) => {
+      setUser(session ? session.user : null);
+      if (event === "SIGNED_OUT") setStatus("disconnected");
+    });
+    unsub = () => sub.subscription.unsubscribe();
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scriptReady]);
+
+  const signUp = useCallback(async (email, password) => {
+    setStatus("connecting");
+    setErrorMsg("");
+    try {
+      const { data, error } = await clientRef.current.auth.signUp({ email, password });
+      if (error) throw error;
+      if (data.user && !data.session) {
+        setErrorMsg("Đã gửi email xác nhận — kiểm tra hộp thư rồi đăng nhập lại.");
+        setStatus("error");
+        return;
+      }
+      if (data.user) { setUser(data.user); await afterLogin(data.user); }
+    } catch (e) {
+      setErrorMsg(e.message || "Không đăng ký được");
+      setStatus("error");
+    }
+  }, [afterLogin]);
+
+  const signIn = useCallback(async (email, password) => {
+    setStatus("connecting");
+    setErrorMsg("");
+    try {
+      const { data, error } = await clientRef.current.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      setUser(data.user);
+      await afterLogin(data.user);
+    } catch (e) {
+      setErrorMsg(e.message || "Sai email hoặc mật khẩu");
+      setStatus("error");
+    }
+  }, [afterLogin]);
+
+  const signOut = useCallback(async () => {
+    if (clientRef.current) await clientRef.current.auth.signOut().catch(() => {});
+    setUser(null);
+    setStatus("disconnected");
+    setLastSyncedAt(null);
+  }, []);
 
   const resolveConflict = useCallback(async (choice) => {
-    if (!conflict) return;
+    if (!conflict || !user) return;
     setStatus("syncing");
     try {
       if (choice === "remote") {
         applyRemoteData(conflict.remote);
       } else {
-        await pushToDrive(conflict.local);
+        await pushToRemote(user.id, conflict.local);
       }
       setConflict(null);
       setStatus("synced");
@@ -533,26 +458,27 @@ function useDriveSync(dataRef, applyRemoteData) {
       setErrorMsg(e.message || "Lỗi đồng bộ");
       setStatus("error");
     }
-  }, [conflict, applyRemoteData, pushToDrive]);
+  }, [conflict, user, applyRemoteData, pushToRemote]);
 
-  const disconnect = useCallback(() => {
-    localStorage.removeItem(LS_CONNECTED);
-    localStorage.removeItem(LS_FILE_ID);
-    fileIdRef.current = "";
-    accessTokenRef.current = "";
-    setStatus("disconnected");
-    setLastSyncedAt(null);
-  }, []);
+  const schedulePush = useCallback((payload) => {
+    pendingPushRef.current = true;
+    if (pushTimer.current) clearTimeout(pushTimer.current);
+    pushTimer.current = setTimeout(async () => {
+      if (!user || status === "disconnected") { pendingPushRef.current = false; return; }
+      if (!navigator.onLine) { setStatus("offline"); return; }
+      setStatus("syncing");
+      try {
+        await pushToRemote(user.id, payload);
+        pendingPushRef.current = false;
+        setStatus("synced");
+        setLastSyncedAt(new Date());
+      } catch (e) {
+        setErrorMsg(e.message || "Lỗi đồng bộ");
+        setStatus(navigator.onLine ? "error" : "offline");
+      }
+    }, 1500);
+  }, [user, status, pushToRemote]);
 
-  // Auto reconnect silently if previously connected.
-  useEffect(() => {
-    if (clientId && localStorage.getItem(LS_CONNECTED) === "1" && status === "disconnected") {
-      connect(false).catch(() => {});
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId]);
-
-  // Retry pending push when connectivity returns.
   useEffect(() => {
     const onOnline = () => {
       if (pendingPushRef.current && dataRef.current) schedulePush(dataRef.current);
@@ -561,7 +487,11 @@ function useDriveSync(dataRef, applyRemoteData) {
     return () => window.removeEventListener("online", onOnline);
   }, [schedulePush, dataRef]);
 
-  return { clientId, saveClientId, status, lastSyncedAt, errorMsg, conflict, connect, disconnect, resolveConflict, schedulePush, scriptReady, scriptError, retryScriptLoad };
+  return {
+    supabaseUrl, supabaseKey, saveCredentials, scriptReady, scriptError,
+    status, user, lastSyncedAt, errorMsg, conflict,
+    signUp, signIn, signOut, resolveConflict, schedulePush,
+  };
 }
 
 /* ------------------------------- app data hook -------------------------------- */
@@ -621,9 +551,9 @@ function useAppData() {
     window.storage.set(STORAGE_KEY, JSON.stringify(normalized), false).catch(() => {});
   }, []);
 
-  const drive = useDriveSync(dataRef, applyRemoteData);
-  const driveRef = useRef(null);
-  driveRef.current = drive;
+  const sync = useSupabaseSync(dataRef, applyRemoteData);
+  const syncRef = useRef(null);
+  syncRef.current = sync;
 
   useEffect(() => {
     (async () => {
@@ -664,7 +594,7 @@ function useAppData() {
         setSaveError(true);
       }
     }, 250);
-    if (driveRef.current) driveRef.current.schedulePush(next);
+    if (syncRef.current) syncRef.current.schedulePush(next);
   }, []);
 
   const resetToSample = useCallback(async () => {
@@ -675,7 +605,7 @@ function useAppData() {
     } catch (e) {}
     dataRef.current = seed;
     setData(seed);
-    if (driveRef.current) driveRef.current.schedulePush(seed);
+    if (syncRef.current) syncRef.current.schedulePush(seed);
   }, []);
 
   const clearAll = useCallback(async () => {
@@ -687,7 +617,7 @@ function useAppData() {
     setData(empty);
   }, []);
 
-  return { data, loading, saveError, persist, resetToSample, clearAll, drive };
+  return { data, loading, saveError, persist, resetToSample, clearAll, sync };
 }
 
 
@@ -2323,17 +2253,17 @@ function PersonnelPage({ data, persist }) {
   );
 }
 
-/* ------------------------------ drive settings UI ------------------------------ */
+/* ------------------------------ auth settings UI ------------------------------ */
 
-function DriveStatusLine({ status, lastSyncedAt, errorMsg }) {
+function AuthStatusLine({ status, lastSyncedAt, errorMsg }) {
   const map = {
-    disconnected: { icon: CloudOff, text: "Chưa kết nối Google Drive", color: "var(--text-muted)" },
+    disconnected: { icon: CloudOff, text: "Chưa đăng nhập", color: "var(--text-muted)" },
     connecting: { icon: RefreshCw, text: "Đang kết nối...", color: "var(--gold)", spin: true },
     syncing: { icon: RefreshCw, text: "Đang đồng bộ...", color: "var(--gold)", spin: true },
     synced: { icon: Cloud, text: lastSyncedAt ? `Đã đồng bộ lúc ${lastSyncedAt.toLocaleTimeString("vi-VN")}` : "Đã đồng bộ", color: "var(--green)" },
     offline: { icon: WifiOff, text: "Mất mạng — sẽ tự đồng bộ khi có mạng", color: "var(--gold)" },
     error: { icon: CloudOff, text: errorMsg || "Lỗi đồng bộ", color: "var(--red)" },
-    conflict: { icon: AlertCircle, text: "Dữ liệu khác nhau giữa máy và Drive", color: "var(--red)" },
+    conflict: { icon: AlertCircle, text: "Dữ liệu khác nhau giữa máy và server", color: "var(--red)" },
   };
   const m = map[status] || map.disconnected;
   const Ic = m.icon;
@@ -2345,74 +2275,70 @@ function DriveStatusLine({ status, lastSyncedAt, errorMsg }) {
   );
 }
 
-function DriveSettingsModal({ drive, onClose }) {
-  const [idInput, setIdInput] = useState(drive.clientId);
-  const hasId = !!drive.clientId;
-  const isConnected = drive.status !== "disconnected" && drive.status !== "error" && hasId;
+function AuthSettingsModal({ sync, onClose }) {
+  const [url, setUrl] = useState(sync.supabaseUrl);
+  const [key, setKey] = useState(sync.supabaseKey);
+  const [mode, setMode] = useState("signin"); // signin | signup
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const hasCreds = !!sync.supabaseUrl && !!sync.supabaseKey;
+  const isLoggedIn = !!sync.user;
 
   return (
-    <Modal title="Đồng bộ Google Drive" onClose={onClose} wide>
+    <Modal title="Đăng nhập & đồng bộ" onClose={onClose} wide>
       <p className="mv-drive-intro">
-        Dữ liệu công ty sẽ được lưu vào một file riêng trong Google Drive của bạn
-        (chỉ app này truy cập được file đó, không đụng tới các file khác trong Drive).
-        App vẫn hoạt động khi mất mạng — dữ liệu tự đồng bộ lại khi có mạng.
+        Dữ liệu công ty được lưu trên máy chủ riêng của bạn (Supabase), đăng nhập bằng email/mật khẩu —
+        dùng được trên mọi thiết bị, không cần kết nối lại mỗi lần. App vẫn hoạt động khi mất mạng,
+        dữ liệu tự đồng bộ lại khi có mạng.
       </p>
 
-      <Field label="Google OAuth Client ID">
-        <input
-          className="mv-input"
-          placeholder="xxxxxxxx.apps.googleusercontent.com"
-          value={idInput}
-          onChange={(e) => setIdInput(e.target.value)}
-        />
-      </Field>
-      <button
-        className="mv-btn mv-btn-ghost mv-btn-sm"
-        style={{ marginBottom: 14 }}
-        onClick={() => drive.saveClientId(idInput)}
-        disabled={!idInput.trim()}
-      >
-        Lưu Client ID
-      </button>
-
-      <div className="mv-drive-divider" />
-
-      <DriveStatusLine status={drive.status} lastSyncedAt={drive.lastSyncedAt} errorMsg={drive.errorMsg} />
-
-      {hasId && drive.scriptError && (
-        <p className="mv-drive-script-error">
-          Không tải được script đăng nhập Google (có thể do mất mạng hoặc trình chặn quảng cáo/extension trên trình duyệt).
-        </p>
+      {!hasCreds || !sync.scriptReady ? (
+        <>
+          <div className="mv-form-grid">
+            <Field label="Supabase Project URL"><input className="mv-input" placeholder="https://xxxx.supabase.co" value={url} onChange={(e) => setUrl(e.target.value)} /></Field>
+            <Field label="Supabase anon public key"><input className="mv-input" placeholder="eyJhbGciOi..." value={key} onChange={(e) => setKey(e.target.value)} /></Field>
+          </div>
+          <button className="mv-btn mv-btn-ghost mv-btn-sm" disabled={!url.trim() || !key.trim()} onClick={() => sync.saveCredentials(url, key)}>
+            Lưu thông tin kết nối
+          </button>
+          {sync.scriptError && <p className="mv-drive-script-error">Không tải được thư viện đồng bộ — kiểm tra lại mạng rồi thử lại.</p>}
+          <p className="mv-drive-hint">Chưa có thông tin này? Làm theo hướng dẫn "Thiết lập Supabase" đi kèm để lấy trong khoảng 5 phút.</p>
+        </>
+      ) : isLoggedIn ? (
+        <>
+          <div className="mv-drive-divider" />
+          <AuthStatusLine status={sync.status} lastSyncedAt={sync.lastSyncedAt} errorMsg={sync.errorMsg} />
+          <p className="mv-row-sub" style={{ marginTop: 8 }}>Đăng nhập với: {sync.user.email}</p>
+          <div className="mv-modal-actions" style={{ justifyContent: "flex-start", marginTop: 14 }}>
+            <button className="mv-btn mv-btn-ghost" onClick={sync.signOut}><Unlink size={15} /> Đăng xuất</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mv-drive-divider" />
+          <div className="mv-view-toggle" style={{ marginBottom: 14 }}>
+            <button className={mode === "signin" ? "mv-view-toggle-active" : ""} onClick={() => setMode("signin")}>Đăng nhập</button>
+            <button className={mode === "signup" ? "mv-view-toggle-active" : ""} onClick={() => setMode("signup")}>Đăng ký</button>
+          </div>
+          <Field label="Email"><input type="email" className="mv-input" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+          <Field label="Mật khẩu"><input type="password" className="mv-input" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={mode === "signup" ? "Tối thiểu 6 ký tự" : ""} /></Field>
+          {sync.errorMsg && <p className="mv-drive-script-error">{sync.errorMsg}</p>}
+          <div className="mv-modal-actions" style={{ justifyContent: "flex-start", marginTop: 14 }}>
+            <button
+              className="mv-btn mv-btn-primary"
+              disabled={!email.trim() || password.length < 6 || sync.status === "connecting"}
+              onClick={() => (mode === "signup" ? sync.signUp(email, password) : sync.signIn(email, password))}
+            >
+              <Cloud size={15} /> {mode === "signup" ? "Đăng ký" : "Đăng nhập"}
+            </button>
+          </div>
+        </>
       )}
-
-      <div className="mv-modal-actions" style={{ justifyContent: "flex-start", marginTop: 14 }}>
-        {drive.scriptError ? (
-          <button className="mv-btn mv-btn-ghost" onClick={drive.retryScriptLoad}>
-            <RefreshCw size={15} /> Thử lại
-          </button>
-        ) : !isConnected ? (
-          <button
-            className="mv-btn mv-btn-primary"
-            disabled={!hasId || !drive.scriptReady}
-            onClick={() => drive.connect(true)}
-          >
-            <Cloud size={15} /> {drive.scriptReady || !hasId ? "Kết nối Google Drive" : "Đang chuẩn bị..."}
-          </button>
-        ) : (
-          <button className="mv-btn mv-btn-ghost" onClick={drive.disconnect}>
-            <Unlink size={15} /> Ngắt kết nối
-          </button>
-        )}
-      </div>
-
-      <p className="mv-drive-hint">
-        Chưa có Client ID? Làm theo hướng dẫn "Thiết lập Google Drive" đi kèm để lấy trong vài phút.
-      </p>
     </Modal>
   );
 }
 
-function DriveConflictModal({ conflict, onResolve }) {
+function SyncConflictModal({ conflict, onResolve }) {
   const localCount = conflict.local?.projects?.length || 0;
   const remoteCount = conflict.remote?.projects?.length || 0;
   const localTime = conflict.local?._meta?.updatedAt ? new Date(conflict.local._meta.updatedAt).toLocaleString("vi-VN") : "không rõ";
@@ -2420,7 +2346,7 @@ function DriveConflictModal({ conflict, onResolve }) {
   return (
     <Modal title="Dữ liệu không khớp" onClose={() => {}}>
       <p className="mv-drive-intro">
-        Dữ liệu trên máy này khác với dữ liệu đang lưu trên Google Drive. Chọn bản bạn muốn giữ
+        Dữ liệu trên máy này khác với dữ liệu đang lưu trên server. Chọn bản bạn muốn giữ
         (bản còn lại sẽ bị ghi đè).
       </p>
       <div className="mv-conflict-grid">
@@ -2431,7 +2357,7 @@ function DriveConflictModal({ conflict, onResolve }) {
           <button className="mv-btn mv-btn-primary mv-btn-sm" style={{ marginTop: 10 }} onClick={() => onResolve("local")}>Dùng bản này</button>
         </div>
         <div className="mv-conflict-card">
-          <div className="mv-detail-label">Trên Google Drive</div>
+          <div className="mv-detail-label">Trên server</div>
           <div className="mv-detail-value">{remoteCount} dự án</div>
           <div className="mv-row-sub mv-mono-date">Cập nhật {remoteTime}</div>
           <button className="mv-btn mv-btn-primary mv-btn-sm" style={{ marginTop: 10 }} onClick={() => onResolve("remote")}>Dùng bản này</button>
@@ -2444,7 +2370,7 @@ function DriveConflictModal({ conflict, onResolve }) {
 /* ----------------------------------- shell ------------------------------------ */
 
 function App() {
-  const { data, loading, saveError, persist, resetToSample, clearAll, drive } = useAppData();
+  const { data, loading, saveError, persist, resetToSample, clearAll, sync } = useAppData();
   const [view, setView] = useState("dashboard");
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -2512,7 +2438,7 @@ function App() {
             {saveError && <div className="mv-save-error">Lưu dữ liệu thất bại. Thay đổi có thể chưa được lưu.</div>}
 
             <button className="mv-drive-trigger" onClick={() => setShowDriveModal(true)}>
-              <DriveStatusLine status={drive.status} lastSyncedAt={drive.lastSyncedAt} errorMsg={drive.errorMsg} />
+              <AuthStatusLine status={sync.status} lastSyncedAt={sync.lastSyncedAt} errorMsg={sync.errorMsg} />
               <Settings size={13} />
             </button>
 
@@ -2568,8 +2494,8 @@ function App() {
         </main>
       </div>
 
-      {showDriveModal && <DriveSettingsModal drive={drive} onClose={() => setShowDriveModal(false)} />}
-      {drive.conflict && <DriveConflictModal conflict={drive.conflict} onResolve={drive.resolveConflict} />}
+      {showDriveModal && <AuthSettingsModal sync={sync} onClose={() => setShowDriveModal(false)} />}
+      {sync.conflict && <SyncConflictModal conflict={sync.conflict} onResolve={sync.resolveConflict} />}
     </div>
   );
 }
