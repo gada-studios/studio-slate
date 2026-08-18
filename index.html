@@ -122,16 +122,18 @@ const EXPENSE_CATEGORIES = [
   "Giấy phép quay", "Nhân sự", "Khác",
 ];
 
-const CATALOG_GROUPS = ["Nhân sự", "SUP", "Post", "Logistics", "Khác"];
+const CATALOG_GROUPS = ["Nhân sự", "Location", "Set", "Technical Rental", "Post", "Miscellaneous"];
 const DEFAULT_CATALOG_ITEMS = {
   "Nhân sự": [
     "Đạo diễn", "DOP", "Camop", "Focus", "AD", "Art Director", "Photographer",
     "BTS", "Stylist", "Makeup", "Hair", "Producer", "Line producer", "PA",
-    "Runner", "Master Location",
+    "Runner", "Master Location", "Giấy phép", "Production fee",
   ],
-  "SUP": ["Rental house", "Setdesign", "Bối cảnh", "Studio"],
+  "Location": ["Bối cảnh", "Studio"],
+  "Set": ["Setdesign"],
+  "Technical Rental": ["Rental house"],
   "Post": ["Offline", "Online", "VFX", "CGI", "Coloris"],
-  "Logistics": ["Vé xe/máy bay", "Xe đoàn", "Lưu trú", "Scouting"],
+  "Miscellaneous": ["Catering", "Vé xe/máy bay", "Xe đoàn", "Lưu trú", "Scouting"],
 };
 const buildDefaultCatalog = () => {
   const items = [];
@@ -139,6 +141,14 @@ const buildDefaultCatalog = () => {
     names.forEach((name) => items.push({ id: uid(), group, name }));
   });
   return items;
+};
+// Non-destructively merges in any default catalog items the user doesn't
+// already have (by name), so existing custom items are always preserved.
+const ensureCatalogDefaults = (existing) => {
+  const existingNames = new Set(existing.map((i) => i.name));
+  const merged = [...existing];
+  buildDefaultCatalog().forEach((d) => { if (!existingNames.has(d.name)) merged.push(d); });
+  return merged;
 };
 
 const TIMELINE_CATALOG_GROUPS = ["Tiền kỳ", "Sản xuất", "Hậu kỳ"];
@@ -219,11 +229,11 @@ const seedData = () => {
       { id: uid(), projectId: p2, type: "Chi", amount: 90000000, date: "2026-06-12", category: "Thiết bị", description: "Thuê flycam & đèn LED" },
     ],
     lineItems: [
-      { id: uid(), projectId: p1, name: "Quay phim (DOP + ê-kíp)", contractValue: 60000000, actualValue: 62000000, paidAmount: 30000000, notes: "" },
-      { id: uid(), projectId: p1, name: "Thuê bối cảnh Đà Lạt", contractValue: 40000000, actualValue: 45000000, paidAmount: 45000000, notes: "Phát sinh thêm 1 ngày quay" },
-      { id: uid(), projectId: p1, name: "Thuê thiết bị (flycam, đèn, gimbal)", contractValue: 35000000, actualValue: 32000000, paidAmount: 20000000, notes: "" },
-      { id: uid(), projectId: p2, name: "Kỹ xảo & hậu kỳ VFX", contractValue: 100000000, actualValue: 100000000, paidAmount: 60000000, notes: "" },
-      { id: uid(), projectId: p2, name: "Thuê thiết bị quay đêm", contractValue: 50000000, actualValue: 58000000, paidAmount: 58000000, notes: "Thêm đèn LED do bối cảnh rộng hơn dự kiến" },
+      { id: uid(), projectId: p1, name: "Quay phim (DOP + ê-kíp)", quantity: 3, unitPrice: 20000000, contractValue: 60000000, actualValue: 62000000, paidAmount: 30000000, notes: "" },
+      { id: uid(), projectId: p1, name: "Thuê bối cảnh Đà Lạt", quantity: 1, unitPrice: 40000000, contractValue: 40000000, actualValue: 45000000, paidAmount: 45000000, notes: "Phát sinh thêm 1 ngày quay" },
+      { id: uid(), projectId: p1, name: "Rental house (flycam, đèn, gimbal)", quantity: 1, unitPrice: 35000000, contractValue: 35000000, actualValue: 32000000, paidAmount: 20000000, notes: "" },
+      { id: uid(), projectId: p2, name: "VFX", quantity: 1, unitPrice: 100000000, contractValue: 100000000, actualValue: 100000000, paidAmount: 60000000, notes: "" },
+      { id: uid(), projectId: p2, name: "Rental house quay đêm", quantity: 1, unitPrice: 50000000, contractValue: 50000000, actualValue: 58000000, paidAmount: 58000000, notes: "Thêm đèn LED do bối cảnh rộng hơn dự kiến" },
     ],
   };
 };
@@ -542,7 +552,7 @@ function normalizeData(d) {
     assignments: n.assignments || [],
     transactions: n.transactions || [],
     lineItems: n.lineItems || [],
-    catalog: n.catalog || buildDefaultCatalog(),
+    catalog: ensureCatalogDefaults(n.catalog || []),
     timelineCatalog: n.timelineCatalog || buildDefaultTimelineCatalog(),
     _meta: n._meta || { updatedAt: new Date().toISOString() },
   };
@@ -702,17 +712,23 @@ function Field({ label, children }) {
 
 /* ------------------------------- form: project ------------------------------ */
 
-function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineCatalogItem }) {
+function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineCatalogItem, catalog, onAddCatalogItem }) {
   const [f, setF] = useState(
     initial || { name: "", client: "", director: "", status: "Chưa bắt đầu", progress: 0, startDate: todayISO(), endDate: "", budget: "", description: "" }
   );
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
   const isNew = !initial;
+  const STEPS = isNew ? [
+    { id: 1, label: "Thông tin" },
+    { id: 2, label: "Timeline" },
+    { id: 3, label: "Bảng dự toán" },
+  ] : [{ id: 1, label: "Thông tin" }];
+  const [step, setStep] = useState(1);
+
   const [pendingMilestones, setPendingMilestones] = useState([]);
   const [showLocalMilestoneForm, setShowLocalMilestoneForm] = useState(false);
   const [editingLocalMilestone, setEditingLocalMilestone] = useState(null);
-
   const addOnDate = (dateKey, name) => {
     setPendingMilestones((prev) => [...prev, { id: uid(), name, date: dateKey, status: "Chưa bắt đầu" }]);
   };
@@ -723,27 +739,74 @@ function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineC
   };
   const deleteLocalMilestone = (id) => setPendingMilestones((prev) => prev.filter((m) => m.id !== id));
 
+  const [pendingLineItems, setPendingLineItems] = useState([]);
+  const [showLocalLineItemForm, setShowLocalLineItemForm] = useState(false);
+  const [editingLocalLineItem, setEditingLocalLineItem] = useState(null);
+  const quickAddLocalLineItem = (catalogItem) => {
+    setEditingLocalLineItem({ name: catalogItem.name, quantity: 1, unitPrice: "", contractValue: "", actualValue: "", paidAmount: "", notes: "" });
+    setShowLocalLineItemForm(true);
+  };
+  const saveLocalLineItem = (l) => {
+    setPendingLineItems((prev) => (l.id && prev.some((x) => x.id === l.id) ? prev.map((x) => (x.id === l.id ? l : x)) : [...prev, { ...l, id: uid() }]));
+    setShowLocalLineItemForm(false);
+    setEditingLocalLineItem(null);
+  };
+  const deleteLocalLineItem = (id) => setPendingLineItems((prev) => prev.filter((l) => l.id !== id));
+  const handleLocalCatalogDrop = (e) => {
+    e.preventDefault();
+    try {
+      const parsed = JSON.parse(e.dataTransfer.getData("text/plain"));
+      if (parsed && parsed.name) quickAddLocalLineItem(parsed);
+    } catch (err) {}
+  };
+  const pendingTotal = pendingLineItems.reduce((s, l) => s + (Number(l.contractValue) || 0), 0);
+
+  const goNext = () => {
+    if (step === 1 && !f.name.trim()) return;
+    setStep((s) => Math.min(s + 1, STEPS.length));
+  };
+  const goBack = () => setStep((s) => Math.max(s - 1, 1));
+
+  const handleFinalSave = () => {
+    if (!f.name.trim()) { setStep(1); return; }
+    onSave({ ...f, progress: Number(f.progress) || 0, budget: Number(f.budget) || 0 }, pendingMilestones, pendingLineItems);
+  };
+
   return (
     <Modal title={initial ? "Sửa dự án" : "Dự án mới"} onClose={onClose} size={isNew ? "xl" : undefined}>
-      <div className="mv-form-grid">
-        <Field label="Tên dự án / MV"><input className="mv-input" value={f.name} onChange={set("name")} placeholder="VD: Cơn Mưa Ngang Qua" /></Field>
-        <Field label="Khách hàng"><input className="mv-input" value={f.client} onChange={set("client")} /></Field>
-        <Field label="Đạo diễn"><input className="mv-input" value={f.director} onChange={set("director")} /></Field>
-        <Field label="Trạng thái">
-          <select className="mv-input" value={f.status} onChange={set("status")}>
-            {PROJECT_STATUSES.map((s) => <option key={s}>{s}</option>)}
-          </select>
-        </Field>
-        <Field label="Tiến độ (%)"><input type="number" min="0" max="100" className="mv-input" value={f.progress} onChange={set("progress")} /></Field>
-        <Field label="Ngân sách (VND)"><input type="number" className="mv-input" value={f.budget} onChange={set("budget")} /></Field>
-        <Field label="Ngày bắt đầu"><input type="date" className="mv-input" value={f.startDate} onChange={set("startDate")} /></Field>
-        <Field label="Ngày kết thúc dự kiến"><input type="date" className="mv-input" value={f.endDate} onChange={set("endDate")} /></Field>
-      </div>
-      <Field label="Mô tả"><textarea className="mv-input" rows={3} value={f.description} onChange={set("description")} /></Field>
-
       {isNew && (
-        <div className="mv-inline-timeline-section">
-          <div className="mv-drive-divider" />
+        <div className="mv-wizard-steps">
+          {STEPS.map((s) => (
+            <div key={s.id} className={`mv-wizard-step ${step === s.id ? "mv-wizard-step-active" : ""} ${step > s.id ? "mv-wizard-step-done" : ""}`}>
+              <span className="mv-wizard-step-num">{step > s.id ? <CheckCircle2 size={13} /> : s.id}</span>
+              {s.label}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {step === 1 && (
+        <>
+          <div className="mv-form-grid">
+            <Field label="Tên dự án / MV"><input className="mv-input" value={f.name} onChange={set("name")} placeholder="VD: Cơn Mưa Ngang Qua" /></Field>
+            <Field label="Khách hàng"><input className="mv-input" value={f.client} onChange={set("client")} /></Field>
+            <Field label="Đạo diễn"><input className="mv-input" value={f.director} onChange={set("director")} /></Field>
+            <Field label="Trạng thái">
+              <select className="mv-input" value={f.status} onChange={set("status")}>
+                {PROJECT_STATUSES.map((s) => <option key={s}>{s}</option>)}
+              </select>
+            </Field>
+            <Field label="Tiến độ (%)"><input type="number" min="0" max="100" className="mv-input" value={f.progress} onChange={set("progress")} /></Field>
+            <Field label="Ngân sách (VND)"><input type="number" className="mv-input" value={f.budget} onChange={set("budget")} /></Field>
+            <Field label="Ngày bắt đầu"><input type="date" className="mv-input" value={f.startDate} onChange={set("startDate")} /></Field>
+            <Field label="Ngày kết thúc dự kiến"><input type="date" className="mv-input" value={f.endDate} onChange={set("endDate")} /></Field>
+          </div>
+          <Field label="Mô tả"><textarea className="mv-input" rows={3} value={f.description} onChange={set("description")} /></Field>
+        </>
+      )}
+
+      {step === 2 && isNew && (
+        <div>
           <h4 className="mv-inline-timeline-title"><Calendar size={15} /> Timeline dự án (tuỳ chọn — có thể thêm sau)</h4>
           <MilestoneCalendar
             milestones={pendingMilestones}
@@ -773,14 +836,58 @@ function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineC
         </div>
       )}
 
+      {step === 3 && isNew && (
+        <div onDragOver={(e) => e.preventDefault()} onDrop={handleLocalCatalogDrop}>
+          <h4 className="mv-inline-timeline-title"><Wallet size={15} /> Bảng dự toán gửi khách (tuỳ chọn — có thể thêm sau)</h4>
+          <CatalogPanel catalog={catalog} onPick={quickAddLocalLineItem} onAddCustom={onAddCatalogItem} />
+          {pendingLineItems.length === 0 ? (
+            <p className="mv-empty-note">Kéo hoặc bấm hạng mục ở trên để thêm vào bảng dự toán. Số liệu này cũng sẽ dùng để theo dõi thực chi sau này.</p>
+          ) : (
+            <table className="mv-quote-table" style={{ marginTop: 14 }}>
+              <thead>
+                <tr><th>Hạng mục</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th><th></th></tr>
+              </thead>
+              <tbody>
+                {pendingLineItems.map((l) => (
+                  <tr key={l.id}>
+                    <td>{l.name}</td>
+                    <td className="mv-mono-date">{l.quantity || 1}</td>
+                    <td className="mv-mono-money">{fmtVND(l.unitPrice || 0)}</td>
+                    <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(l.contractValue)}</td>
+                    <td>
+                      <button className="mv-icon-btn" onClick={() => { setEditingLocalLineItem(l); setShowLocalLineItemForm(true); }}><Pencil size={14} /></button>
+                      <button className="mv-icon-btn" onClick={() => deleteLocalLineItem(l.id)}><Trash2 size={14} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={3} className="mv-quote-total-label">TỔNG DỰ TOÁN</td>
+                  <td className="mv-quote-amount-cell mv-mono-money mv-quote-total-value">{fmtVND(pendingTotal)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
+          {showLocalLineItemForm && (
+            <LineItemForm
+              initial={editingLocalLineItem}
+              onClose={() => { setShowLocalLineItemForm(false); setEditingLocalLineItem(null); }}
+              onSave={saveLocalLineItem}
+            />
+          )}
+        </div>
+      )}
+
       <div className="mv-modal-actions">
         <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
-        <button
-          className="mv-btn mv-btn-primary"
-          onClick={() => f.name.trim() && onSave({ ...f, progress: Number(f.progress) || 0, budget: Number(f.budget) || 0 }, pendingMilestones)}
-        >
-          Lưu dự án
-        </button>
+        {step > 1 && <button className="mv-btn mv-btn-ghost" onClick={goBack}>Quay lại</button>}
+        {isNew && step < STEPS.length ? (
+          <button className="mv-btn mv-btn-primary" onClick={goNext}>Tiếp theo</button>
+        ) : (
+          <button className="mv-btn mv-btn-primary" onClick={handleFinalSave}>Lưu dự án</button>
+        )}
       </div>
     </Modal>
   );
@@ -817,8 +924,13 @@ function ContractForm({ initial, onSave, onClose }) {
 /* ------------------------------ form: line item (hạng mục) ------------------------------ */
 
 function LineItemForm({ initial, onSave, onClose }) {
-  const [f, setF] = useState(initial || { name: "", contractValue: "", actualValue: "", paidAmount: "", notes: "" });
+  const [f, setF] = useState(() =>
+    initial
+      ? { quantity: 1, unitPrice: initial.contractValue || 0, ...initial }
+      : { name: "", quantity: 1, unitPrice: "", contractValue: "", actualValue: "", paidAmount: "", notes: "" }
+  );
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const computedContractValue = (Number(f.quantity) || 0) * (Number(f.unitPrice) || 0);
   return (
     <Modal title={initial && initial.id ? "Sửa hạng mục" : "Hạng mục mới"} onClose={onClose}>
       <Field label="Tên hạng mục">
@@ -828,7 +940,11 @@ function LineItemForm({ initial, onSave, onClose }) {
         </datalist>
       </Field>
       <div className="mv-form-grid">
-        <Field label="Giá trị theo hợp đồng (VND)"><input type="number" className="mv-input" value={f.contractValue} onChange={set("contractValue")} /></Field>
+        <Field label="Số lượng"><input type="number" className="mv-input" value={f.quantity} onChange={set("quantity")} /></Field>
+        <Field label="Đơn giá — dự toán gửi khách (VND)"><input type="number" className="mv-input" value={f.unitPrice} onChange={set("unitPrice")} /></Field>
+        <Field label="Theo hợp đồng (tự tính)"><input className="mv-input" value={fmtVND(computedContractValue)} disabled /></Field>
+      </div>
+      <div className="mv-form-grid">
         <Field label="Giá trị thực chi (VND)"><input type="number" className="mv-input" value={f.actualValue} onChange={set("actualValue")} placeholder="Để trống nếu chưa phát sinh" /></Field>
         <Field label="Đã thanh toán (VND)"><input type="number" className="mv-input" value={f.paidAmount} onChange={set("paidAmount")} /></Field>
       </div>
@@ -839,8 +955,10 @@ function LineItemForm({ initial, onSave, onClose }) {
           className="mv-btn mv-btn-primary"
           onClick={() => f.name.trim() && onSave({
             ...f,
-            contractValue: Number(f.contractValue) || 0,
-            actualValue: f.actualValue === "" ? Number(f.contractValue) || 0 : Number(f.actualValue) || 0,
+            quantity: Number(f.quantity) || 1,
+            unitPrice: Number(f.unitPrice) || 0,
+            contractValue: computedContractValue,
+            actualValue: f.actualValue === "" ? computedContractValue : Number(f.actualValue) || 0,
             paidAmount: Number(f.paidAmount) || 0,
           })}
         >
@@ -1064,7 +1182,7 @@ function ProjectsList({ data, persist, openProject }) {
     return matchesQuery && matchesStatus;
   });
 
-  const saveProject = (proj, pendingMilestones) => {
+  const saveProject = (proj, pendingMilestones, pendingLineItems) => {
     const next = { ...data };
     let newProjectId = proj.id;
     if (proj.id) {
@@ -1079,9 +1197,19 @@ function ProjectsList({ data, persist, openProject }) {
         ...pendingMilestones.map((m) => ({ ...m, id: uid(), projectId: newProjectId })),
       ];
     }
+    if (pendingLineItems && pendingLineItems.length > 0) {
+      next.lineItems = [
+        ...data.lineItems,
+        ...pendingLineItems.map((l) => ({ ...l, id: uid(), projectId: newProjectId })),
+      ];
+    }
     persist(next);
     setShowForm(false);
     setEditing(null);
+  };
+
+  const addCatalogItem = ({ group, name }) => {
+    persist({ ...data, catalog: [...data.catalog, { id: uid(), group, name }] });
   };
 
   const addTimelineCatalogItem = ({ group, name }) => {
@@ -1096,6 +1224,7 @@ function ProjectsList({ data, persist, openProject }) {
       milestones: data.milestones.filter((m) => m.projectId !== id),
       assignments: data.assignments.filter((a) => a.projectId !== id),
       transactions: data.transactions.filter((t) => t.projectId !== id),
+      lineItems: data.lineItems.filter((l) => l.projectId !== id),
     };
     persist(next);
     setConfirmDelete(null);
@@ -1145,6 +1274,8 @@ function ProjectsList({ data, persist, openProject }) {
           onSave={saveProject}
           timelineCatalog={data.timelineCatalog}
           onAddTimelineCatalogItem={addTimelineCatalogItem}
+          catalog={data.catalog}
+          onAddCatalogItem={addCatalogItem}
         />
       )}
     </div>
@@ -1427,7 +1558,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
     persist({ ...data, lineItems: data.lineItems.map((l) => (l.id === id ? { ...l, paidAmount: actualValue } : l)) });
   };
   const quickAddFromCatalog = (item) => {
-    setEditingLineItem({ name: item.name, contractValue: "", actualValue: "", paidAmount: "", notes: "" });
+    setEditingLineItem({ name: item.name, quantity: 1, unitPrice: "", contractValue: "", actualValue: "", paidAmount: "", notes: "" });
     setShowLineItemForm(true);
   };
   const addCatalogItem = ({ group, name }) => {
@@ -1597,68 +1728,82 @@ function ProjectDetail({ data, persist, projectId, back }) {
           <CatalogPanel catalog={data.catalog} onPick={quickAddFromCatalog} onAddCustom={addCatalogItem} />
         </div>
 
-        <div className="mv-panel" onDragOver={(e) => e.preventDefault()} onDrop={handleCatalogDrop}>
-          <div className="mv-panel-head">
-            <h3 className="mv-panel-title"><Wallet size={16} /> Hạng mục chi phí theo hợp đồng</h3>
-            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingLineItem(null); setShowLineItemForm(true); }}><Plus size={14} /> Thêm hạng mục</button>
+        <div className="mv-panel" onDragOver={(e) => e.preventDefault()} onDrop={handleCatalogDrop} id="mv-printable-lineitems">
+          <div className="mv-panel-head mv-no-print">
+            <h3 className="mv-panel-title"><Wallet size={16} /> Bảng dự toán &amp; hạng mục chi phí</h3>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => window.print()}><FileText size={14} /> Tải PDF (gửi khách)</button>
+              <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingLineItem(null); setShowLineItemForm(true); }}><Plus size={14} /> Thêm hạng mục</button>
+            </div>
           </div>
-          {lineItems.length === 0 && <p className="mv-empty-note">Chưa có hạng mục nào. Thêm từng hạng mục theo hợp đồng (thuê thiết bị, bối cảnh, quay phim...) để theo dõi ngân sách và thực chi.</p>}
+
+          <div className="mv-print-only mv-print-header">
+            <img src={LOGO_DATA_URI} alt="Logo" className="mv-print-logo" />
+            <div>
+              <div className="mv-print-title">Bảng dự toán — {project.name}</div>
+              {project.client && <div className="mv-print-sub">Khách hàng: {project.client}</div>}
+            </div>
+          </div>
+
+          {lineItems.length === 0 && <p className="mv-empty-note mv-no-print">Chưa có hạng mục nào. Kéo hoặc bấm hạng mục ở danh mục trên để thêm — số liệu này vừa dùng làm bảng dự toán gửi khách, vừa dùng để theo dõi thực chi nội bộ.</p>}
+
           {lineItems.length > 0 && (
-            <div className="mv-stats-row mv-stats-row-sm">
+            <>
+            <div className="mv-stats-row mv-stats-row-sm mv-no-print">
               <StatCard label="Theo hợp đồng" value={fmtVND(lineItems.reduce((s, l) => s + l.contractValue, 0))} />
               <StatCard label="Thực chi" value={fmtVND(lineItems.reduce((s, l) => s + l.actualValue, 0))} tone="#D4A537" />
               <StatCard label="Đã thanh toán" value={fmtVND(lineItems.reduce((s, l) => s + (l.paidAmount || 0), 0))} tone="#5FB77E" />
               <StatCard label="Còn nợ" value={fmtVND(lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0))} tone="#C1443C" />
             </div>
+
+            <table className="mv-quote-table">
+              <thead>
+                <tr>
+                  <th>Hạng mục</th>
+                  <th>SL</th>
+                  <th>Đơn giá</th>
+                  <th>Theo hợp đồng</th>
+                  <th className="mv-no-print">Thực chi</th>
+                  <th className="mv-no-print">Đã TT</th>
+                  <th className="mv-no-print">Còn nợ</th>
+                  <th className="mv-no-print"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {lineItems.map((l) => {
+                  const debt = l.actualValue - (l.paidAmount || 0);
+                  return confirmRemove === l.id ? (
+                    <tr key={l.id}><td colSpan={8}><ConfirmBar text={`Xoá hạng mục "${l.name}"?`} onConfirm={() => deleteLineItem(l.id)} onCancel={() => setConfirmRemove(null)} /></td></tr>
+                  ) : (
+                    <tr key={l.id}>
+                      <td>{l.name}{l.notes && <div className="mv-row-sub">{l.notes}</div>}</td>
+                      <td className="mv-mono-date">{l.quantity || 1}</td>
+                      <td className="mv-mono-money">{fmtVND(l.unitPrice || 0)}</td>
+                      <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(l.contractValue)}</td>
+                      <td className="mv-mono-money mv-no-print">{fmtVND(l.actualValue)}</td>
+                      <td className="mv-mono-money mv-no-print" style={{ color: "#5FB77E" }}>{fmtVND(l.paidAmount || 0)}</td>
+                      <td className="mv-no-print">
+                        {debt > 0 ? <span className="mv-debt-badge">{fmtVND(debt)}</span> : <span className="mv-paid-badge">Đã trả đủ</span>}
+                      </td>
+                      <td className="mv-no-print">
+                        <button className="mv-icon-btn" onClick={() => { setEditingLineItem(l); setShowLineItemForm(true); }}><Pencil size={14} /></button>
+                        <button className="mv-icon-btn" onClick={() => setConfirmRemove(l.id)}><Trash2 size={14} /></button>
+                        {debt > 0 && <button className="mv-icon-btn" title="Đánh dấu đã trả đủ" onClick={() => markLineItemPaid(l.id, l.actualValue)}><CheckCircle2 size={14} /></button>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={3} className="mv-quote-total-label">TỔNG DỰ TOÁN</td>
+                  <td className="mv-quote-amount-cell mv-mono-money mv-quote-total-value">{fmtVND(lineItems.reduce((s, l) => s + l.contractValue, 0))}</td>
+                  <td colSpan={4} className="mv-no-print"></td>
+                </tr>
+              </tfoot>
+            </table>
+            </>
           )}
-          {lineItems.map((l) => {
-            const debt = l.actualValue - (l.paidAmount || 0);
-            const variance = l.actualValue - l.contractValue;
-            return confirmRemove === l.id ? (
-              <ConfirmBar key={l.id} text={`Xoá hạng mục "${l.name}"?`} onConfirm={() => deleteLineItem(l.id)} onCancel={() => setConfirmRemove(null)} />
-            ) : (
-              <div key={l.id} className="mv-lineitem-card">
-                <div className="mv-lineitem-head">
-                  <div className="mv-row-title">{l.name}</div>
-                  <div className="mv-row-right">
-                    <button className="mv-icon-btn" onClick={() => { setEditingLineItem(l); setShowLineItemForm(true); }}><Pencil size={14} /></button>
-                    <button className="mv-icon-btn" onClick={() => setConfirmRemove(l.id)}><Trash2 size={14} /></button>
-                  </div>
-                </div>
-                <div className="mv-lineitem-cols">
-                  <div className="mv-lineitem-col">
-                    <div className="mv-detail-label">Theo hợp đồng</div>
-                    <div className="mv-mono-money">{fmtVND(l.contractValue)}</div>
-                  </div>
-                  <div className="mv-lineitem-col">
-                    <div className="mv-detail-label">Thực chi</div>
-                    <div className="mv-mono-money" style={{ color: variance > 0 ? "#C1443C" : variance < 0 ? "#5FB77E" : undefined }}>
-                      {fmtVND(l.actualValue)}
-                      {variance !== 0 && (
-                        <span className="mv-variance-note">{variance > 0 ? " +" : " "}{fmtVND(Math.abs(variance)).replace("₫", "")}{variance > 0 ? " so với HĐ" : " tiết kiệm"}</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="mv-lineitem-col">
-                    <div className="mv-detail-label">Đã thanh toán</div>
-                    <div className="mv-mono-money" style={{ color: "#5FB77E" }}>{fmtVND(l.paidAmount || 0)}</div>
-                  </div>
-                  <div className="mv-lineitem-col">
-                    <div className="mv-detail-label">Còn nợ</div>
-                    {debt > 0 ? (
-                      <div className="mv-debt-badge">{fmtVND(debt)}</div>
-                    ) : (
-                      <div className="mv-paid-badge">Đã trả đủ</div>
-                    )}
-                  </div>
-                </div>
-                {debt > 0 && (
-                  <button className="mv-btn mv-btn-ghost mv-btn-sm" style={{ marginTop: 8 }} onClick={() => markLineItemPaid(l.id, l.actualValue)}>Đánh dấu đã trả đủ</button>
-                )}
-                {l.notes && <div className="mv-row-sub" style={{ marginTop: 6 }}>Ghi chú: {l.notes}</div>}
-              </div>
-            );
-          })}
           {showLineItemForm && <LineItemForm initial={editingLineItem} onClose={() => { setShowLineItemForm(false); setEditingLineItem(null); }} onSave={saveLineItem} />}
         </div>
         </>
@@ -2273,6 +2418,16 @@ const CSS = `
 .mv-lineitem-col { display: flex; flex-direction: column; gap: 3px; }
 .mv-variance-note { display: block; font-size: 10px; color: var(--text-muted); font-weight: 500; }
 
+.mv-quote-table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+.mv-quote-table th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); padding: 8px 8px; border-bottom: 1px solid var(--border); }
+.mv-quote-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.mv-quote-name-input { min-width: 160px; }
+.mv-quote-num-input { width: 90px; }
+.mv-quote-amount-cell { text-align: right; white-space: nowrap; font-weight: 600; }
+.mv-quote-total-label { text-align: right; font-weight: 700; font-family: 'Oswald', sans-serif; letter-spacing: 0.03em; text-transform: uppercase; font-size: 12.5px; padding-top: 12px; }
+.mv-quote-total-value { font-size: 15px; color: var(--gold); padding-top: 12px; }
+.mv-print-sub { font-size: 12px; color: #444; margin-top: 2px; }
+
 .mv-catalog { display: flex; flex-direction: column; gap: 12px; }
 .mv-catalog-hint { font-size: 12px; color: var(--text-muted); }
 .mv-catalog-group-label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; }
@@ -2295,6 +2450,14 @@ const CSS = `
 
 .mv-inline-timeline-section { margin-top: 8px; }
 .mv-inline-timeline-title { display: flex; align-items: center; gap: 7px; font-family: 'Oswald', sans-serif; font-size: 13px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); margin: 4px 0 12px; }
+
+.mv-wizard-steps { display: flex; align-items: center; gap: 6px; margin-bottom: 20px; }
+.mv-wizard-step { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--text-muted); padding: 5px 12px 5px 5px; border-radius: 20px; background: var(--surface-2); }
+.mv-wizard-step-num { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--border); color: var(--text-muted); font-size: 11px; font-family: 'JetBrains Mono', monospace; }
+.mv-wizard-step-active { color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, var(--surface-2)); }
+.mv-wizard-step-active .mv-wizard-step-num { background: var(--gold); color: #1D1A16; }
+.mv-wizard-step-done .mv-wizard-step-num { background: var(--green); color: #1D1A16; }
+.mv-wizard-step-done { color: var(--green); }
 .mv-inline-milestone-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .mv-inline-milestone-chip { display: flex; align-items: center; gap: 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 20px; padding: 4px 6px 4px 12px; font-size: 12px; }
 
@@ -2314,18 +2477,29 @@ const CSS = `
 
 @media print {
   body * { visibility: hidden; }
-  #mv-printable-calendar, #mv-printable-calendar * { visibility: visible; }
-  #mv-printable-calendar { position: absolute; top: 0; left: 0; width: 100%; background: #fff; color: #111; border: none; }
-  #mv-printable-calendar .mv-no-print { display: none !important; }
-  #mv-printable-calendar .mv-print-only { display: block; font-family: 'Oswald', sans-serif; font-size: 20px; font-weight: 600; margin-bottom: 14px; color: #111; }
-  #mv-printable-calendar .mv-print-header { display: flex; margin-bottom: 16px; }
-  #mv-printable-calendar .mv-print-header .mv-print-title { margin-bottom: 0; }
-  #mv-printable-calendar .mv-print-logo { filter: invert(1); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #mv-printable-calendar, #mv-printable-calendar *,
+  #mv-printable-lineitems, #mv-printable-lineitems * { visibility: visible; }
+  #mv-printable-calendar, #mv-printable-lineitems { position: absolute; top: 0; left: 0; width: 100%; background: #fff; color: #111; border: none; }
+  #mv-printable-calendar .mv-no-print, #mv-printable-lineitems .mv-no-print { display: none !important; }
+  #mv-printable-calendar .mv-print-only, #mv-printable-lineitems .mv-print-only { display: block; }
+  #mv-printable-calendar .mv-print-title, #mv-printable-lineitems .mv-print-title { font-family: 'Oswald', sans-serif; font-size: 20px; font-weight: 600; margin-bottom: 0; color: #111; }
+  #mv-printable-calendar .mv-print-header, #mv-printable-lineitems .mv-print-header { display: flex; align-items: center; margin-bottom: 18px; }
+  #mv-printable-calendar .mv-print-sub, #mv-printable-lineitems .mv-print-sub { color: #444; }
+  #mv-printable-calendar .mv-print-logo, #mv-printable-lineitems .mv-print-logo { filter: invert(1); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
   #mv-printable-calendar .mv-calendar-title { color: #111; }
   #mv-printable-calendar .mv-calendar-weekday { color: #555; }
   #mv-printable-calendar .mv-calendar-cell { border: 1px solid #ccc; background: #fff; break-inside: avoid; }
   #mv-printable-calendar .mv-calendar-daynum { color: #555; }
   #mv-printable-calendar .mv-calendar-chip { color: #111; border-left-width: 3px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  #mv-printable-lineitems { padding: 8mm; }
+  #mv-printable-lineitems .mv-quote-table th { color: #555; border-bottom: 1px solid #999; }
+  #mv-printable-lineitems .mv-quote-table td { border-bottom: 1px solid #ddd; color: #111; }
+  #mv-printable-lineitems .mv-quote-total-label { color: #111; }
+  #mv-printable-lineitems .mv-quote-total-value { color: #111; font-size: 16px; }
+  #mv-printable-lineitems .mv-row-sub { color: #666; }
+
   @page { size: landscape; margin: 12mm; }
 }
 `;
