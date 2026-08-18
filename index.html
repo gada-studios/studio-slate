@@ -1,0 +1,1566 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#14120F" />
+<title>Studio Slate — Quản lý sản xuất MV</title>
+<link rel="manifest" href="./manifest.json" />
+<link rel="icon" href="./icon-192.png" />
+<link rel="apple-touch-icon" href="./icon-192.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #0B0A08; }
+  #root { min-height: 100vh; }
+  .mv-app { border-radius: 0 !important; min-height: 100vh !important; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* --------------------------- local storage shim ---------------------------- */
+window.storage = {
+  get: async (key, shared) => {
+    const raw = window.localStorage.getItem("mvstore_" + key);
+    if (raw === null) return null;
+    return { key, value: raw, shared: !!shared };
+  },
+  set: async (key, value, shared) => {
+    window.localStorage.setItem("mvstore_" + key, value);
+    return { key, value, shared: !!shared };
+  },
+  delete: async (key, shared) => {
+    window.localStorage.removeItem("mvstore_" + key);
+    return { key, deleted: true, shared: !!shared };
+  },
+  list: async (prefix, shared) => {
+    const p = "mvstore_" + (prefix || "");
+    const keys = Object.keys(window.localStorage).filter((k) => k.startsWith(p)).map((k) => k.slice(8));
+    return { keys, prefix, shared: !!shared };
+  },
+};
+
+/* ------------------------------ inline icons -------------------------------- */
+function Icon({ size = 16, strokeWidth = 2, className, children }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      {children}
+    </svg>
+  );
+}
+const LayoutDashboard = (p) => <Icon {...p}><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></Icon>;
+const Film = (p) => <Icon {...p}><rect x="2" y="2" width="20" height="20" rx="2"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="7" x2="22" y2="7"/><line x1="2" y1="17" x2="22" y2="17"/></Icon>;
+const Users = (p) => <Icon {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Icon>;
+const FileText = (p) => <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></Icon>;
+const Wallet = (p) => <Icon {...p}><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></Icon>;
+const Calendar = (p) => <Icon {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></Icon>;
+const Plus = (p) => <Icon {...p}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></Icon>;
+const X = (p) => <Icon {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Icon>;
+const Pencil = (p) => <Icon {...p}><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></Icon>;
+const Trash2 = (p) => <Icon {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></Icon>;
+const ChevronRight = (p) => <Icon {...p}><polyline points="9 18 15 12 9 6"/></Icon>;
+const ArrowLeft = (p) => <Icon {...p}><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></Icon>;
+const Search = (p) => <Icon {...p}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></Icon>;
+const TrendingUp = (p) => <Icon {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></Icon>;
+const TrendingDown = (p) => <Icon {...p}><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></Icon>;
+const CheckCircle2 = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></Icon>;
+const Clock = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></Icon>;
+const AlertCircle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></Icon>;
+const Phone = (p) => <Icon {...p}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></Icon>;
+const Mail = (p) => <Icon {...p}><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,6 12,13 2,6"/></Icon>;
+const Loader2 = (p) => <Icon {...p}><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></Icon>;
+const PauseCircle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><line x1="10" y1="9" x2="10" y2="15"/><line x1="14" y1="9" x2="14" y2="15"/></Icon>;
+const Circle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/></Icon>;
+
+const Cloud = (p) => <Icon {...p}><path d="M17.5 19H9a7 7 0 1 1 6.71-9h.79a4.5 4.5 0 1 1 0 9z"/></Icon>;
+const CloudOff = (p) => <Icon {...p}><path d="M22.61 16.95A5 5 0 0 0 18 10h-1.26a8 8 0 0 0-7.05-6M5 5 1 1a10.66 10.66 0 0 0-1.66 1.71A5 5 0 0 0 6 15h11m2 2 4 4"/><line x1="1" y1="1" x2="23" y2="23"/></Icon>;
+const RefreshCw = (p) => <Icon {...p}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>;
+const Unlink = (p) => <Icon {...p}><path d="M18.84 12.25l1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="M5.17 11.75l-1.72 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><line x1="8" y1="2" x2="8" y2="5"/><line x1="2" y1="8" x2="5" y2="8"/><line x1="16" y1="19" x2="16" y2="22"/><line x1="19" y1="16" x2="22" y2="16"/></Icon>;
+const Settings = (p) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></Icon>;
+const WifiOff = (p) => <Icon {...p}><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></Icon>;
+
+/* ------------------------------- constants --------------------------------- */
+
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_FILE_NAME = "studio-slate-data.json";
+const LS_CLIENT_ID = "mv_google_client_id";
+const LS_CONNECTED = "mv_drive_connected";
+const LS_FILE_ID = "mv_drive_file_id";
+
+/* ------------------------------- drive sync ---------------------------------- */
+/* Thin wrapper around Google Identity Services (token client) + Drive v3 REST
+   API, using the drive.file scope (app only ever sees files it created). */
+
+function loadGoogleScript() {
+  return new Promise((resolve, reject) => {
+    if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+      resolve();
+      return;
+    }
+    const existing = document.getElementById("mv-gsi-script");
+    if (existing) {
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error("Không tải được Google Identity Services")));
+      return;
+    }
+    const s = document.createElement("script");
+    s.id = "mv-gsi-script";
+    s.src = "https://accounts.google.com/gsi/client";
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Không tải được Google Identity Services"));
+    document.head.appendChild(s);
+  });
+}
+
+function useDriveSync(dataRef, applyRemoteData) {
+  const [clientId, setClientId] = useState(() => localStorage.getItem(LS_CLIENT_ID) || "");
+  const [status, setStatus] = useState("disconnected"); // disconnected | connecting | syncing | synced | offline | error | conflict
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [conflict, setConflict] = useState(null); // { local, remote }
+  const tokenClientRef = useRef(null);
+  const accessTokenRef = useRef("");
+  const fileIdRef = useRef(localStorage.getItem(LS_FILE_ID) || "");
+  const pushTimer = useRef(null);
+  const pendingPushRef = useRef(false);
+
+  const saveClientId = (id) => {
+    localStorage.setItem(LS_CLIENT_ID, id.trim());
+    setClientId(id.trim());
+  };
+
+  const ensureTokenClient = useCallback(async () => {
+    if (!clientId) throw new Error("Chưa có Client ID.");
+    await loadGoogleScript();
+    if (!tokenClientRef.current) {
+      tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: DRIVE_SCOPE,
+        callback: () => {},
+      });
+    }
+    return tokenClientRef.current;
+  }, [clientId]);
+
+  const requestToken = useCallback((interactive) => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const tc = await ensureTokenClient();
+        tc.callback = (resp) => {
+          if (resp.error) reject(new Error(resp.error));
+          else {
+            accessTokenRef.current = resp.access_token;
+            resolve(resp.access_token);
+          }
+        };
+        tc.requestAccessToken({ prompt: interactive ? "consent" : "" });
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }, [ensureTokenClient]);
+
+  const driveFetch = useCallback(async (url, opts = {}, retry = true) => {
+    const token = accessTokenRef.current;
+    const res = await fetch(url, {
+      ...opts,
+      headers: { ...(opts.headers || {}), Authorization: "Bearer " + token },
+    });
+    if (res.status === 401 && retry) {
+      await requestToken(false);
+      return driveFetch(url, opts, false);
+    }
+    return res;
+  }, [requestToken]);
+
+  const findRemoteFile = useCallback(async () => {
+    const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+    const res = await driveFetch(
+      `https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,modifiedTime)`
+    );
+    if (!res.ok) throw new Error("Không truy vấn được Google Drive.");
+    const json = await res.json();
+    return json.files && json.files[0] ? json.files[0] : null;
+  }, [driveFetch]);
+
+  const downloadRemote = useCallback(async (fileId) => {
+    const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+    if (!res.ok) throw new Error("Không tải được dữ liệu từ Drive.");
+    return res.json();
+  }, [driveFetch]);
+
+  const createRemoteFile = useCallback(async (payload) => {
+    const boundary = "mvboundary" + Date.now();
+    const metadata = { name: DRIVE_FILE_NAME, mimeType: "application/json" };
+    const body =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(payload)}\r\n--${boundary}--`;
+    const res = await driveFetch(
+      "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+      { method: "POST", headers: { "Content-Type": `multipart/related; boundary=${boundary}` }, body }
+    );
+    if (!res.ok) throw new Error("Không tạo được file trên Drive.");
+    const json = await res.json();
+    return json.id;
+  }, [driveFetch]);
+
+  const updateRemoteFile = useCallback(async (fileId, payload) => {
+    const res = await driveFetch(
+      `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
+      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
+    );
+    if (!res.ok) throw new Error("Không lưu được dữ liệu lên Drive.");
+  }, [driveFetch]);
+
+  const pushToDrive = useCallback(async (payload) => {
+    if (!fileIdRef.current) {
+      const found = await findRemoteFile();
+      if (found) fileIdRef.current = found.id;
+      else fileIdRef.current = await createRemoteFile(payload);
+      localStorage.setItem(LS_FILE_ID, fileIdRef.current);
+      return;
+    }
+    await updateRemoteFile(fileIdRef.current, payload);
+  }, [findRemoteFile, createRemoteFile, updateRemoteFile]);
+
+  const schedulePush = useCallback((payload) => {
+    pendingPushRef.current = true;
+    if (pushTimer.current) clearTimeout(pushTimer.current);
+    pushTimer.current = setTimeout(async () => {
+      if (status === "disconnected" || !accessTokenRef.current) { pendingPushRef.current = false; return; }
+      if (!navigator.onLine) { setStatus("offline"); return; }
+      setStatus("syncing");
+      try {
+        await pushToDrive(payload);
+        pendingPushRef.current = false;
+        setStatus("synced");
+        setLastSyncedAt(new Date());
+      } catch (e) {
+        setErrorMsg(e.message || "Lỗi đồng bộ");
+        setStatus(navigator.onLine ? "error" : "offline");
+      }
+    }, 1500);
+  }, [pushToDrive, status]);
+
+  const connect = useCallback(async (interactive = true) => {
+    setStatus("connecting");
+    setErrorMsg("");
+    try {
+      await requestToken(interactive);
+      const found = await findRemoteFile();
+      const local = dataRef.current;
+      const localUpdatedAt = local && local._meta ? local._meta.updatedAt : null;
+
+      if (found) {
+        fileIdRef.current = found.id;
+        localStorage.setItem(LS_FILE_ID, found.id);
+        const remote = await downloadRemote(found.id);
+        const remoteUpdatedAt = remote && remote._meta ? remote._meta.updatedAt : found.modifiedTime;
+        const localHasRealData = local && local.projects && local.projects.length > 0;
+        const remoteHasRealData = remote && remote.projects && remote.projects.length > 0;
+
+        if (!remoteHasRealData) {
+          await pushToDrive(local);
+        } else if (!localHasRealData) {
+          applyRemoteData(remote);
+        } else if (localUpdatedAt && remoteUpdatedAt && new Date(localUpdatedAt).getTime() === new Date(remoteUpdatedAt).getTime()) {
+          // already in sync
+        } else {
+          setConflict({ local, remote });
+          setStatus("conflict");
+          localStorage.setItem(LS_CONNECTED, "1");
+          return;
+        }
+      } else {
+        await pushToDrive(local);
+      }
+      localStorage.setItem(LS_CONNECTED, "1");
+      setStatus("synced");
+      setLastSyncedAt(new Date());
+    } catch (e) {
+      setErrorMsg(e.message || "Không kết nối được Google Drive");
+      setStatus("error");
+    }
+  }, [requestToken, findRemoteFile, downloadRemote, pushToDrive, applyRemoteData, dataRef]);
+
+  const resolveConflict = useCallback(async (choice) => {
+    if (!conflict) return;
+    setStatus("syncing");
+    try {
+      if (choice === "remote") {
+        applyRemoteData(conflict.remote);
+      } else {
+        await pushToDrive(conflict.local);
+      }
+      setConflict(null);
+      setStatus("synced");
+      setLastSyncedAt(new Date());
+    } catch (e) {
+      setErrorMsg(e.message || "Lỗi đồng bộ");
+      setStatus("error");
+    }
+  }, [conflict, applyRemoteData, pushToDrive]);
+
+  const disconnect = useCallback(() => {
+    localStorage.removeItem(LS_CONNECTED);
+    localStorage.removeItem(LS_FILE_ID);
+    fileIdRef.current = "";
+    accessTokenRef.current = "";
+    setStatus("disconnected");
+    setLastSyncedAt(null);
+  }, []);
+
+  // Auto reconnect silently if previously connected.
+  useEffect(() => {
+    if (clientId && localStorage.getItem(LS_CONNECTED) === "1" && status === "disconnected") {
+      connect(false).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
+  // Retry pending push when connectivity returns.
+  useEffect(() => {
+    const onOnline = () => {
+      if (pendingPushRef.current && dataRef.current) schedulePush(dataRef.current);
+    };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [schedulePush, dataRef]);
+
+  return { clientId, saveClientId, status, lastSyncedAt, errorMsg, conflict, connect, disconnect, resolveConflict, schedulePush };
+}
+
+/* ------------------------------- app data hook -------------------------------- */
+
+function useAppData() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saveError, setSaveError] = useState(false);
+  const saveTimer = useRef(null);
+  const dataRef = useRef(null);
+
+  const applyRemoteData = useCallback((remote) => {
+    dataRef.current = remote;
+    setData(remote);
+    window.storage.set(STORAGE_KEY, JSON.stringify(remote), false).catch(() => {});
+  }, []);
+
+  const drive = useDriveSync(dataRef, applyRemoteData);
+  const driveRef = useRef(null);
+  driveRef.current = drive;
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get(STORAGE_KEY, false);
+        let initial;
+        if (res && res.value) {
+          initial = JSON.parse(res.value);
+        } else {
+          initial = seedData();
+          initial._meta = { updatedAt: new Date().toISOString() };
+          await window.storage.set(STORAGE_KEY, JSON.stringify(initial), false);
+        }
+        dataRef.current = initial;
+        setData(initial);
+      } catch (e) {
+        const seed = seedData();
+        seed._meta = { updatedAt: new Date().toISOString() };
+        dataRef.current = seed;
+        setData(seed);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const persist = useCallback((next) => {
+    next._meta = { updatedAt: new Date().toISOString() };
+    dataRef.current = next;
+    setData(next);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        const result = await window.storage.set(STORAGE_KEY, JSON.stringify(next), false);
+        if (!result) setSaveError(true);
+        else setSaveError(false);
+      } catch (e) {
+        setSaveError(true);
+      }
+    }, 250);
+    if (driveRef.current) driveRef.current.schedulePush(next);
+  }, []);
+
+  const resetToSample = useCallback(async () => {
+    const seed = seedData();
+    seed._meta = { updatedAt: new Date().toISOString() };
+    try {
+      await window.storage.set(STORAGE_KEY, JSON.stringify(seed), false);
+    } catch (e) {}
+    dataRef.current = seed;
+    setData(seed);
+    if (driveRef.current) driveRef.current.schedulePush(seed);
+  }, []);
+
+  const clearAll = useCallback(async () => {
+    const empty = { projects: [], contracts: [], milestones: [], personnel: [], assignments: [], transactions: [], _meta: { updatedAt: new Date().toISOString() } };
+    try {
+      await window.storage.set(STORAGE_KEY, JSON.stringify(empty), false);
+    } catch (e) {}
+    dataRef.current = empty;
+    setData(empty);
+  }, []);
+
+  return { data, loading, saveError, persist, resetToSample, clearAll, drive };
+}
+
+
+/* --------------------------------- atoms ----------------------------------- */
+
+function Badge({ status }) {
+  const meta = STATUS_META[status] || { color: "#9C948A", icon: Circle };
+  const Icon = meta.icon;
+  return (
+    <span className="mv-badge" style={{ "--badge-color": meta.color }}>
+      <Icon size={12} strokeWidth={2.5} />
+      {status}
+    </span>
+  );
+}
+
+function StatCard({ label, value, sub, tone }) {
+  return (
+    <div className="mv-stat">
+      <div className="mv-stat-label">{label}</div>
+      <div className="mv-stat-value" style={tone ? { color: tone } : undefined}>{value}</div>
+      {sub && <div className="mv-stat-sub">{sub}</div>}
+    </div>
+  );
+}
+
+function ProgressBar({ value }) {
+  return (
+    <div className="mv-progress">
+      <div className="mv-progress-fill" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+      <div className="mv-progress-perf" />
+    </div>
+  );
+}
+
+function Modal({ title, onClose, children, wide }) {
+  return (
+    <div className="mv-modal-overlay" onClick={onClose}>
+      <div className={`mv-modal ${wide ? "mv-modal-wide" : ""}`} onClick={(e) => e.stopPropagation()}>
+        <div className="mv-modal-head">
+          <h3>{title}</h3>
+          <button className="mv-icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="mv-modal-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmBar({ text, onConfirm, onCancel }) {
+  return (
+    <div className="mv-confirm">
+      <span>{text}</span>
+      <div>
+        <button className="mv-btn mv-btn-ghost" onClick={onCancel}>Huỷ</button>
+        <button className="mv-btn mv-btn-danger" onClick={onConfirm}>Xoá</button>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="mv-field">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+/* ------------------------------- form: project ------------------------------ */
+
+function ProjectForm({ initial, onSave, onClose }) {
+  const [f, setF] = useState(
+    initial || { name: "", client: "", director: "", status: "Chưa bắt đầu", progress: 0, startDate: todayISO(), endDate: "", budget: "", description: "" }
+  );
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <Modal title={initial ? "Sửa dự án" : "Dự án mới"} onClose={onClose}>
+      <div className="mv-form-grid">
+        <Field label="Tên dự án / MV"><input className="mv-input" value={f.name} onChange={set("name")} placeholder="VD: Cơn Mưa Ngang Qua" /></Field>
+        <Field label="Khách hàng"><input className="mv-input" value={f.client} onChange={set("client")} /></Field>
+        <Field label="Đạo diễn"><input className="mv-input" value={f.director} onChange={set("director")} /></Field>
+        <Field label="Trạng thái">
+          <select className="mv-input" value={f.status} onChange={set("status")}>
+            {PROJECT_STATUSES.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        </Field>
+        <Field label="Tiến độ (%)"><input type="number" min="0" max="100" className="mv-input" value={f.progress} onChange={set("progress")} /></Field>
+        <Field label="Ngân sách (VND)"><input type="number" className="mv-input" value={f.budget} onChange={set("budget")} /></Field>
+        <Field label="Ngày bắt đầu"><input type="date" className="mv-input" value={f.startDate} onChange={set("startDate")} /></Field>
+        <Field label="Ngày kết thúc dự kiến"><input type="date" className="mv-input" value={f.endDate} onChange={set("endDate")} /></Field>
+      </div>
+      <Field label="Mô tả"><textarea className="mv-input" rows={3} value={f.description} onChange={set("description")} /></Field>
+      <div className="mv-modal-actions">
+        <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
+        <button
+          className="mv-btn mv-btn-primary"
+          onClick={() => f.name.trim() && onSave({ ...f, progress: Number(f.progress) || 0, budget: Number(f.budget) || 0 })}
+        >
+          Lưu dự án
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/* ------------------------------- form: contract ------------------------------ */
+
+function ContractForm({ initial, onSave, onClose }) {
+  const [f, setF] = useState(initial || { contractNumber: "", value: "", signedDate: "", status: "Chờ ký", paymentTerms: "", notes: "" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <Modal title={initial ? "Sửa hợp đồng" : "Hợp đồng mới"} onClose={onClose}>
+      <div className="mv-form-grid">
+        <Field label="Số hợp đồng"><input className="mv-input" value={f.contractNumber} onChange={set("contractNumber")} /></Field>
+        <Field label="Giá trị (VND)"><input type="number" className="mv-input" value={f.value} onChange={set("value")} /></Field>
+        <Field label="Ngày ký"><input type="date" className="mv-input" value={f.signedDate} onChange={set("signedDate")} /></Field>
+        <Field label="Trạng thái">
+          <select className="mv-input" value={f.status} onChange={set("status")}>
+            {CONTRACT_STATUSES.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field label="Điều khoản thanh toán"><input className="mv-input" value={f.paymentTerms} onChange={set("paymentTerms")} /></Field>
+      <Field label="Ghi chú"><textarea className="mv-input" rows={2} value={f.notes} onChange={set("notes")} /></Field>
+      <div className="mv-modal-actions">
+        <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
+        <button className="mv-btn mv-btn-primary" onClick={() => f.contractNumber.trim() && onSave({ ...f, value: Number(f.value) || 0 })}>Lưu hợp đồng</button>
+      </div>
+    </Modal>
+  );
+}
+
+/* ------------------------------ form: milestone ------------------------------ */
+
+function MilestoneForm({ initial, onSave, onClose }) {
+  const [f, setF] = useState(initial || { name: "", date: todayISO(), status: "Chưa bắt đầu" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <Modal title={initial ? "Sửa mốc tiến độ" : "Mốc tiến độ mới"} onClose={onClose}>
+      <Field label="Tên mốc"><input className="mv-input" value={f.name} onChange={set("name")} placeholder="VD: Bàn giao bản dựng thô" /></Field>
+      <div className="mv-form-grid">
+        <Field label="Ngày"><input type="date" className="mv-input" value={f.date} onChange={set("date")} /></Field>
+        <Field label="Trạng thái">
+          <select className="mv-input" value={f.status} onChange={set("status")}>
+            {MILESTONE_STATUSES.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div className="mv-modal-actions">
+        <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
+        <button className="mv-btn mv-btn-primary" onClick={() => f.name.trim() && onSave(f)}>Lưu mốc</button>
+      </div>
+    </Modal>
+  );
+}
+
+/* ------------------------------ form: personnel ------------------------------ */
+
+function PersonnelForm({ initial, onSave, onClose }) {
+  const [f, setF] = useState(initial || { name: "", role: "", phone: "", email: "", dayRate: "" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <Modal title={initial ? "Sửa nhân sự" : "Thêm nhân sự"} onClose={onClose}>
+      <div className="mv-form-grid">
+        <Field label="Họ tên"><input className="mv-input" value={f.name} onChange={set("name")} /></Field>
+        <Field label="Vai trò / chuyên môn">
+          <input className="mv-input" list="mv-role-list" value={f.role} onChange={set("role")} />
+          <datalist id="mv-role-list">
+            {ROLE_SUGGESTIONS.map((r) => <option key={r} value={r} />)}
+          </datalist>
+        </Field>
+        <Field label="Số điện thoại"><input className="mv-input" value={f.phone} onChange={set("phone")} /></Field>
+        <Field label="Email"><input className="mv-input" value={f.email} onChange={set("email")} /></Field>
+        <Field label="Đơn giá / ngày (VND)"><input type="number" className="mv-input" value={f.dayRate} onChange={set("dayRate")} /></Field>
+      </div>
+      <div className="mv-modal-actions">
+        <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
+        <button className="mv-btn mv-btn-primary" onClick={() => f.name.trim() && onSave({ ...f, dayRate: Number(f.dayRate) || 0 })}>Lưu nhân sự</button>
+      </div>
+    </Modal>
+  );
+}
+
+/* ----------------------------- form: assignment ------------------------------ */
+
+function AssignmentForm({ personnelList, onSave, onClose }) {
+  const [f, setF] = useState({ personnelId: personnelList[0]?.id || "", roleInProject: "", fee: "" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <Modal title="Thêm nhân sự vào dự án" onClose={onClose}>
+      {personnelList.length === 0 ? (
+        <p className="mv-empty-note">Chưa có nhân sự nào trong danh sách công ty. Hãy thêm nhân sự ở mục "Nhân sự" trước.</p>
+      ) : (
+        <>
+          <Field label="Chọn nhân sự">
+            <select className="mv-input" value={f.personnelId} onChange={set("personnelId")}>
+              {personnelList.map((p) => <option key={p.id} value={p.id}>{p.name} — {p.role}</option>)}
+            </select>
+          </Field>
+          <div className="mv-form-grid">
+            <Field label="Vai trò trong dự án này"><input className="mv-input" value={f.roleInProject} onChange={set("roleInProject")} placeholder="VD: Quay phim chính" /></Field>
+            <Field label="Thù lao (VND)"><input type="number" className="mv-input" value={f.fee} onChange={set("fee")} /></Field>
+          </div>
+          <div className="mv-modal-actions">
+            <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
+            <button className="mv-btn mv-btn-primary" onClick={() => onSave({ ...f, fee: Number(f.fee) || 0 })}>Thêm vào dự án</button>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+/* ---------------------------- form: transaction ------------------------------ */
+
+function TransactionForm({ initial, onSave, onClose }) {
+  const [f, setF] = useState(initial || { type: "Thu", amount: "", date: todayISO(), category: "", description: "" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <Modal title={initial ? "Sửa giao dịch" : "Giao dịch mới"} onClose={onClose}>
+      <div className="mv-form-grid">
+        <Field label="Loại">
+          <select className="mv-input" value={f.type} onChange={set("type")}>
+            {TXN_TYPES.map((t) => <option key={t}>{t}</option>)}
+          </select>
+        </Field>
+        <Field label="Số tiền (VND)"><input type="number" className="mv-input" value={f.amount} onChange={set("amount")} /></Field>
+        <Field label="Ngày"><input type="date" className="mv-input" value={f.date} onChange={set("date")} /></Field>
+        <Field label="Hạng mục"><input className="mv-input" value={f.category} onChange={set("category")} placeholder="VD: Bối cảnh, Nhân sự, Thiết bị..." /></Field>
+      </div>
+      <Field label="Diễn giải"><textarea className="mv-input" rows={2} value={f.description} onChange={set("description")} /></Field>
+      <div className="mv-modal-actions">
+        <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
+        <button className="mv-btn mv-btn-primary" onClick={() => f.amount && onSave({ ...f, amount: Number(f.amount) || 0 })}>Lưu giao dịch</button>
+      </div>
+    </Modal>
+  );
+}
+
+/* -------------------------------- dashboard ---------------------------------- */
+
+function Dashboard({ data, openProject }) {
+  const { projects, transactions, milestones } = data;
+  const active = projects.filter((p) => !["Hoàn thành", "Tạm dừng"].includes(p.status));
+  const totalThu = transactions.filter((t) => t.type === "Thu").reduce((s, t) => s + t.amount, 0);
+  const totalChi = transactions.filter((t) => t.type === "Chi").reduce((s, t) => s + t.amount, 0);
+  const upcoming = milestones
+    .filter((m) => m.status !== "Hoàn thành")
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .slice(0, 6);
+
+  return (
+    <div>
+      <div className="mv-stats-row">
+        <StatCard label="Tổng số dự án" value={projects.length} />
+        <StatCard label="Đang triển khai" value={active.length} tone="#D4A537" />
+        <StatCard label="Tổng doanh thu" value={fmtVND(totalThu)} tone="#5FB77E" />
+        <StatCard label="Tổng chi phí" value={fmtVND(totalChi)} tone="#C1443C" />
+      </div>
+
+      <div className="mv-dash-grid">
+        <div className="mv-panel">
+          <h3 className="mv-panel-title"><Film size={16} /> Dự án đang hoạt động</h3>
+          {active.length === 0 && <p className="mv-empty-note">Chưa có dự án nào đang hoạt động.</p>}
+          {active.map((p) => (
+            <div key={p.id} className="mv-mini-row" onClick={() => openProject(p.id)}>
+              <div className="mv-mini-row-main">
+                <span className="mv-mini-name">{p.name}</span>
+                <Badge status={p.status} />
+              </div>
+              <ProgressBar value={p.progress} />
+            </div>
+          ))}
+        </div>
+
+        <div className="mv-panel">
+          <h3 className="mv-panel-title"><Calendar size={16} /> Mốc tiến độ sắp tới</h3>
+          {upcoming.length === 0 && <p className="mv-empty-note">Không có mốc tiến độ nào sắp tới.</p>}
+          {upcoming.map((m) => {
+            const proj = projects.find((p) => p.id === m.projectId);
+            return (
+              <div key={m.id} className="mv-mini-row" onClick={() => proj && openProject(proj.id)}>
+                <div className="mv-mini-row-main">
+                  <span className="mv-mini-name">{m.name}</span>
+                  <span className="mv-mono-date">{fmtDate(m.date)}</span>
+                </div>
+                <div className="mv-mini-sub">{proj?.name || "—"} <Badge status={m.status} /></div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------- projects list -------------------------------- */
+
+function ProjectSlateCard({ p, onOpen, onEdit, onDelete }) {
+  return (
+    <div className="mv-slate">
+      <div className="mv-slate-clap">
+        <div className="mv-slate-stripes" />
+        <div className="mv-slate-clap-actions">
+          <button className="mv-icon-btn mv-icon-btn-light" onClick={(e) => { e.stopPropagation(); onEdit(); }}><Pencil size={14} /></button>
+          <button className="mv-icon-btn mv-icon-btn-light" onClick={(e) => { e.stopPropagation(); onDelete(); }}><Trash2 size={14} /></button>
+        </div>
+      </div>
+      <div className="mv-slate-body" onClick={onOpen}>
+        <div className="mv-slate-row"><span>SCENE</span><strong>{p.name}</strong></div>
+        <div className="mv-slate-row"><span>CLIENT</span><strong>{p.client || "—"}</strong></div>
+        <div className="mv-slate-row"><span>DIR.</span><strong>{p.director || "—"}</strong></div>
+        <div className="mv-slate-footer">
+          <Badge status={p.status} />
+          <span className="mv-mono-date">{fmtDate(p.startDate)} → {fmtDate(p.endDate)}</span>
+        </div>
+        <ProgressBar value={p.progress} />
+        <div className="mv-slate-open">Xem chi tiết <ChevronRight size={14} /></div>
+      </div>
+    </div>
+  );
+}
+
+function ProjectsList({ data, persist, openProject }) {
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("Tất cả");
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const filtered = data.projects.filter((p) => {
+    const matchesQuery = (p.name + p.client + p.director).toLowerCase().includes(query.toLowerCase());
+    const matchesStatus = statusFilter === "Tất cả" || p.status === statusFilter;
+    return matchesQuery && matchesStatus;
+  });
+
+  const saveProject = (proj) => {
+    const next = { ...data };
+    if (proj.id) {
+      next.projects = data.projects.map((p) => (p.id === proj.id ? proj : p));
+    } else {
+      next.projects = [...data.projects, { ...proj, id: uid() }];
+    }
+    persist(next);
+    setShowForm(false);
+    setEditing(null);
+  };
+
+  const deleteProject = (id) => {
+    const next = {
+      ...data,
+      projects: data.projects.filter((p) => p.id !== id),
+      contracts: data.contracts.filter((c) => c.projectId !== id),
+      milestones: data.milestones.filter((m) => m.projectId !== id),
+      assignments: data.assignments.filter((a) => a.projectId !== id),
+      transactions: data.transactions.filter((t) => t.projectId !== id),
+    };
+    persist(next);
+    setConfirmDelete(null);
+  };
+
+  return (
+    <div>
+      <div className="mv-toolbar">
+        <div className="mv-search">
+          <Search size={16} />
+          <input placeholder="Tìm dự án, khách hàng, đạo diễn..." value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <select className="mv-input mv-filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option>Tất cả</option>
+          {PROJECT_STATUSES.map((s) => <option key={s}>{s}</option>)}
+        </select>
+        <button className="mv-btn mv-btn-primary" onClick={() => { setEditing(null); setShowForm(true); }}>
+          <Plus size={16} /> Dự án mới
+        </button>
+      </div>
+
+      {filtered.length === 0 && <p className="mv-empty-note">Không tìm thấy dự án nào.</p>}
+
+      <div className="mv-slate-grid">
+        {filtered.map((p) => (
+          <div key={p.id}>
+            {confirmDelete === p.id ? (
+              <div className="mv-slate mv-slate-confirm">
+                <ConfirmBar text={`Xoá dự án "${p.name}"? Toàn bộ hợp đồng, timeline, nhân sự, dòng tiền liên quan cũng sẽ bị xoá.`} onConfirm={() => deleteProject(p.id)} onCancel={() => setConfirmDelete(null)} />
+              </div>
+            ) : (
+              <ProjectSlateCard
+                p={p}
+                onOpen={() => openProject(p.id)}
+                onEdit={() => { setEditing(p); setShowForm(true); }}
+                onDelete={() => setConfirmDelete(p.id)}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+
+      {showForm && (
+        <ProjectForm
+          initial={editing}
+          onClose={() => { setShowForm(false); setEditing(null); }}
+          onSave={saveProject}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------- project detail -------------------------------- */
+
+function ProjectDetail({ data, persist, projectId, back }) {
+  const project = data.projects.find((p) => p.id === projectId);
+  const [tab, setTab] = useState("overview");
+  const [showContractForm, setShowContractForm] = useState(false);
+  const [editingContract, setEditingContract] = useState(null);
+  const [showMilestoneForm, setShowMilestoneForm] = useState(false);
+  const [editingMilestone, setEditingMilestone] = useState(null);
+  const [showAssignForm, setShowAssignForm] = useState(false);
+  const [showTxnForm, setShowTxnForm] = useState(false);
+  const [editingTxn, setEditingTxn] = useState(null);
+  const [confirmRemove, setConfirmRemove] = useState(null);
+
+  if (!project) {
+    return (
+      <div>
+        <button className="mv-back" onClick={back}><ArrowLeft size={16} /> Quay lại</button>
+        <p className="mv-empty-note">Dự án không tồn tại (có thể đã bị xoá).</p>
+      </div>
+    );
+  }
+
+  const contracts = data.contracts.filter((c) => c.projectId === projectId);
+  const milestones = data.milestones.filter((m) => m.projectId === projectId).sort((a, b) => new Date(a.date) - new Date(b.date));
+  const assignments = data.assignments.filter((a) => a.projectId === projectId);
+  const transactions = data.transactions.filter((t) => t.projectId === projectId).sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const thu = transactions.filter((t) => t.type === "Thu").reduce((s, t) => s + t.amount, 0);
+  const chi = transactions.filter((t) => t.type === "Chi").reduce((s, t) => s + t.amount, 0);
+
+  const patchProject = (patch) => persist({ ...data, projects: data.projects.map((p) => (p.id === projectId ? { ...p, ...patch } : p)) });
+
+  const saveContract = (c) => {
+    const next = { ...data };
+    next.contracts = c.id
+      ? data.contracts.map((x) => (x.id === c.id ? c : x))
+      : [...data.contracts, { ...c, id: uid(), projectId }];
+    persist(next);
+    setShowContractForm(false);
+    setEditingContract(null);
+  };
+  const deleteContract = (id) => { persist({ ...data, contracts: data.contracts.filter((c) => c.id !== id) }); setConfirmRemove(null); };
+
+  const saveMilestone = (m) => {
+    const next = { ...data };
+    next.milestones = m.id
+      ? data.milestones.map((x) => (x.id === m.id ? m : x))
+      : [...data.milestones, { ...m, id: uid(), projectId }];
+    persist(next);
+    setShowMilestoneForm(false);
+    setEditingMilestone(null);
+  };
+  const deleteMilestone = (id) => { persist({ ...data, milestones: data.milestones.filter((m) => m.id !== id) }); setConfirmRemove(null); };
+
+  const saveAssignment = (a) => {
+    persist({ ...data, assignments: [...data.assignments, { ...a, id: uid(), projectId }] });
+    setShowAssignForm(false);
+  };
+  const removeAssignment = (id) => { persist({ ...data, assignments: data.assignments.filter((a) => a.id !== id) }); setConfirmRemove(null); };
+
+  const saveTxn = (t) => {
+    const next = { ...data };
+    next.transactions = t.id
+      ? data.transactions.map((x) => (x.id === t.id ? t : x))
+      : [...data.transactions, { ...t, id: uid(), projectId }];
+    persist(next);
+    setShowTxnForm(false);
+    setEditingTxn(null);
+  };
+  const deleteTxn = (id) => { persist({ ...data, transactions: data.transactions.filter((t) => t.id !== id) }); setConfirmRemove(null); };
+
+  const assignedPersonnel = assignments.map((a) => ({ ...a, person: data.personnel.find((p) => p.id === a.personnelId) }));
+  const availablePersonnel = data.personnel.filter((p) => !assignments.some((a) => a.personnelId === p.id));
+
+  const TABS = [
+    { id: "overview", label: "Tổng quan", icon: Film },
+    { id: "contract", label: "Hợp đồng", icon: FileText },
+    { id: "timeline", label: "Timeline", icon: Calendar },
+    { id: "crew", label: "Nhân sự", icon: Users },
+    { id: "cashflow", label: "Dòng tiền", icon: Wallet },
+  ];
+
+  return (
+    <div>
+      <button className="mv-back" onClick={back}><ArrowLeft size={16} /> Danh sách dự án</button>
+
+      <div className="mv-project-head">
+        <div>
+          <div className="mv-eyebrow">DỰ ÁN MV</div>
+          <h2>{project.name}</h2>
+          <div className="mv-project-sub">{project.client} · Đạo diễn {project.director || "—"}</div>
+        </div>
+        <Badge status={project.status} />
+      </div>
+
+      <div className="mv-tabs">
+        {TABS.map((t) => (
+          <button key={t.id} className={`mv-tab ${tab === t.id ? "mv-tab-active" : ""}`} onClick={() => setTab(t.id)}>
+            <t.icon size={15} /> {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "overview" && (
+        <div className="mv-panel">
+          <div className="mv-overview-grid">
+            <div>
+              <div className="mv-detail-label">Tiến độ tổng thể</div>
+              <div className="mv-overview-progress">
+                <ProgressBar value={project.progress} />
+                <span className="mv-mono-date">{project.progress}%</span>
+              </div>
+              <div className="mv-inline-progress-edit">
+                <input
+                  type="range" min="0" max="100" value={project.progress}
+                  onChange={(e) => patchProject({ progress: Number(e.target.value) })}
+                />
+              </div>
+            </div>
+            <div><div className="mv-detail-label">Ngân sách</div><div className="mv-detail-value">{fmtVND(project.budget)}</div></div>
+            <div><div className="mv-detail-label">Thời gian</div><div className="mv-detail-value mv-mono-date">{fmtDate(project.startDate)} → {fmtDate(project.endDate)}</div></div>
+            <div><div className="mv-detail-label">Thu / Chi dự án</div><div className="mv-detail-value"><span style={{ color: "#5FB77E" }}>{fmtVND(thu)}</span> / <span style={{ color: "#C1443C" }}>{fmtVND(chi)}</span></div></div>
+          </div>
+          {project.description && (
+            <div style={{ marginTop: 16 }}>
+              <div className="mv-detail-label">Mô tả</div>
+              <p className="mv-desc">{project.description}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "contract" && (
+        <div className="mv-panel">
+          <div className="mv-panel-head">
+            <h3 className="mv-panel-title"><FileText size={16} /> Hợp đồng</h3>
+            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingContract(null); setShowContractForm(true); }}><Plus size={14} /> Thêm hợp đồng</button>
+          </div>
+          {contracts.length === 0 && <p className="mv-empty-note">Chưa có hợp đồng nào cho dự án này.</p>}
+          {contracts.map((c) => (
+            confirmRemove === c.id ? (
+              <ConfirmBar key={c.id} text={`Xoá hợp đồng ${c.contractNumber}?`} onConfirm={() => deleteContract(c.id)} onCancel={() => setConfirmRemove(null)} />
+            ) : (
+              <div key={c.id} className="mv-row-card">
+                <div>
+                  <div className="mv-row-title">{c.contractNumber} <Badge status={c.status} /></div>
+                  <div className="mv-row-sub">Ký ngày {fmtDate(c.signedDate)} · {c.paymentTerms || "Chưa có điều khoản thanh toán"}</div>
+                  {c.notes && <div className="mv-row-sub">Ghi chú: {c.notes}</div>}
+                </div>
+                <div className="mv-row-right">
+                  <span className="mv-mono-money">{fmtVND(c.value)}</span>
+                  <button className="mv-icon-btn" onClick={() => { setEditingContract(c); setShowContractForm(true); }}><Pencil size={14} /></button>
+                  <button className="mv-icon-btn" onClick={() => setConfirmRemove(c.id)}><Trash2 size={14} /></button>
+                </div>
+              </div>
+            )
+          ))}
+          {showContractForm && <ContractForm initial={editingContract} onClose={() => { setShowContractForm(false); setEditingContract(null); }} onSave={saveContract} />}
+        </div>
+      )}
+
+      {tab === "timeline" && (
+        <div className="mv-panel">
+          <div className="mv-panel-head">
+            <h3 className="mv-panel-title"><Calendar size={16} /> Timeline / mốc tiến độ</h3>
+            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingMilestone(null); setShowMilestoneForm(true); }}><Plus size={14} /> Thêm mốc</button>
+          </div>
+          {milestones.length === 0 && <p className="mv-empty-note">Chưa có mốc tiến độ nào.</p>}
+          <div className="mv-filmstrip">
+            {milestones.map((m) => (
+              confirmRemove === m.id ? (
+                <ConfirmBar key={m.id} text={`Xoá mốc "${m.name}"?`} onConfirm={() => deleteMilestone(m.id)} onCancel={() => setConfirmRemove(null)} />
+              ) : (
+                <div key={m.id} className="mv-milestone">
+                  <div className="mv-milestone-dot" style={{ background: STATUS_META[m.status]?.color }} />
+                  <div className="mv-milestone-body">
+                    <div className="mv-row-title">{m.name}</div>
+                    <div className="mv-row-sub mv-mono-date">{fmtDate(m.date)}</div>
+                  </div>
+                  <Badge status={m.status} />
+                  <button className="mv-icon-btn" onClick={() => { setEditingMilestone(m); setShowMilestoneForm(true); }}><Pencil size={14} /></button>
+                  <button className="mv-icon-btn" onClick={() => setConfirmRemove(m.id)}><Trash2 size={14} /></button>
+                </div>
+              )
+            ))}
+          </div>
+          {showMilestoneForm && <MilestoneForm initial={editingMilestone} onClose={() => { setShowMilestoneForm(false); setEditingMilestone(null); }} onSave={saveMilestone} />}
+        </div>
+      )}
+
+      {tab === "crew" && (
+        <div className="mv-panel">
+          <div className="mv-panel-head">
+            <h3 className="mv-panel-title"><Users size={16} /> Nhân sự tham gia dự án</h3>
+            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => setShowAssignForm(true)}><Plus size={14} /> Thêm nhân sự</button>
+          </div>
+          {assignedPersonnel.length === 0 && <p className="mv-empty-note">Chưa có nhân sự nào được gán vào dự án này.</p>}
+          {assignedPersonnel.map((a) => (
+            confirmRemove === a.id ? (
+              <ConfirmBar key={a.id} text={`Bỏ ${a.person?.name || "nhân sự"} khỏi dự án?`} onConfirm={() => removeAssignment(a.id)} onCancel={() => setConfirmRemove(null)} />
+            ) : (
+              <div key={a.id} className="mv-row-card">
+                <div>
+                  <div className="mv-row-title">{a.person?.name || "(đã xoá khỏi danh sách)"}</div>
+                  <div className="mv-row-sub">{a.roleInProject || a.person?.role} · {a.person?.phone}</div>
+                </div>
+                <div className="mv-row-right">
+                  <span className="mv-mono-money">{fmtVND(a.fee)}</span>
+                  <button className="mv-icon-btn" onClick={() => setConfirmRemove(a.id)}><Trash2 size={14} /></button>
+                </div>
+              </div>
+            )
+          ))}
+          {showAssignForm && <AssignmentForm personnelList={availablePersonnel} onClose={() => setShowAssignForm(false)} onSave={saveAssignment} />}
+        </div>
+      )}
+
+      {tab === "cashflow" && (
+        <div className="mv-panel">
+          <div className="mv-panel-head">
+            <h3 className="mv-panel-title"><Wallet size={16} /> Dòng tiền dự án</h3>
+            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingTxn(null); setShowTxnForm(true); }}><Plus size={14} /> Thêm giao dịch</button>
+          </div>
+          <div className="mv-stats-row mv-stats-row-sm">
+            <StatCard label="Tổng thu" value={fmtVND(thu)} tone="#5FB77E" />
+            <StatCard label="Tổng chi" value={fmtVND(chi)} tone="#C1443C" />
+            <StatCard label="Còn lại" value={fmtVND(thu - chi)} tone={thu - chi >= 0 ? "#D4A537" : "#C1443C"} />
+          </div>
+          {transactions.length === 0 && <p className="mv-empty-note">Chưa có giao dịch nào.</p>}
+          {transactions.map((t) => (
+            confirmRemove === t.id ? (
+              <ConfirmBar key={t.id} text="Xoá giao dịch này?" onConfirm={() => deleteTxn(t.id)} onCancel={() => setConfirmRemove(null)} />
+            ) : (
+              <div key={t.id} className="mv-row-card">
+                <div className="mv-row-txn-icon" style={{ color: t.type === "Thu" ? "#5FB77E" : "#C1443C" }}>
+                  {t.type === "Thu" ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div className="mv-row-title">{t.category || t.type} <span className="mv-mono-date">· {fmtDate(t.date)}</span></div>
+                  {t.description && <div className="mv-row-sub">{t.description}</div>}
+                </div>
+                <div className="mv-row-right">
+                  <span className="mv-mono-money" style={{ color: t.type === "Thu" ? "#5FB77E" : "#C1443C" }}>
+                    {t.type === "Thu" ? "+" : "-"}{fmtVND(t.amount)}
+                  </span>
+                  <button className="mv-icon-btn" onClick={() => { setEditingTxn(t); setShowTxnForm(true); }}><Pencil size={14} /></button>
+                  <button className="mv-icon-btn" onClick={() => setConfirmRemove(t.id)}><Trash2 size={14} /></button>
+                </div>
+              </div>
+            )
+          ))}
+          {showTxnForm && <TransactionForm initial={editingTxn} onClose={() => { setShowTxnForm(false); setEditingTxn(null); }} onSave={saveTxn} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* --------------------------------- personnel page ------------------------------ */
+
+function PersonnelPage({ data, persist }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [query, setQuery] = useState("");
+
+  const save = (p) => {
+    const next = { ...data };
+    next.personnel = p.id ? data.personnel.map((x) => (x.id === p.id ? p : x)) : [...data.personnel, { ...p, id: uid() }];
+    persist(next);
+    setShowForm(false);
+    setEditing(null);
+  };
+
+  const del = (id) => {
+    persist({
+      ...data,
+      personnel: data.personnel.filter((p) => p.id !== id),
+      assignments: data.assignments.filter((a) => a.personnelId !== id),
+    });
+    setConfirmDelete(null);
+  };
+
+  const filtered = data.personnel.filter((p) => (p.name + p.role).toLowerCase().includes(query.toLowerCase()));
+
+  const projectCount = (personnelId) => data.assignments.filter((a) => a.personnelId === personnelId).length;
+
+  return (
+    <div>
+      <div className="mv-toolbar">
+        <div className="mv-search">
+          <Search size={16} />
+          <input placeholder="Tìm nhân sự theo tên hoặc vai trò..." value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <button className="mv-btn mv-btn-primary" onClick={() => { setEditing(null); setShowForm(true); }}><Plus size={16} /> Thêm nhân sự</button>
+      </div>
+
+      {filtered.length === 0 && <p className="mv-empty-note">Chưa có nhân sự nào.</p>}
+
+      <div className="mv-crew-grid">
+        {filtered.map((p) => (
+          confirmDelete === p.id ? (
+            <div key={p.id} className="mv-panel"><ConfirmBar text={`Xoá nhân sự "${p.name}"? Nhân sự sẽ được gỡ khỏi mọi dự án.`} onConfirm={() => del(p.id)} onCancel={() => setConfirmDelete(null)} /></div>
+          ) : (
+            <div key={p.id} className="mv-crew-card">
+              <div className="mv-crew-avatar">{p.name.split(" ").slice(-1)[0]?.[0] || "?"}</div>
+              <div className="mv-crew-info">
+                <div className="mv-row-title">{p.name}</div>
+                <div className="mv-row-sub">{p.role}</div>
+                <div className="mv-crew-contact">
+                  {p.phone && <span><Phone size={12} /> {p.phone}</span>}
+                  {p.email && <span><Mail size={12} /> {p.email}</span>}
+                </div>
+                <div className="mv-row-sub">Đơn giá: <span className="mv-mono-money">{fmtVND(p.dayRate)}</span>/ngày · {projectCount(p.id)} dự án</div>
+              </div>
+              <div className="mv-row-right mv-crew-actions">
+                <button className="mv-icon-btn" onClick={() => { setEditing(p); setShowForm(true); }}><Pencil size={14} /></button>
+                <button className="mv-icon-btn" onClick={() => setConfirmDelete(p.id)}><Trash2 size={14} /></button>
+              </div>
+            </div>
+          )
+        ))}
+      </div>
+
+      {showForm && <PersonnelForm initial={editing} onClose={() => { setShowForm(false); setEditing(null); }} onSave={save} />}
+    </div>
+  );
+}
+
+/* ------------------------------ drive settings UI ------------------------------ */
+
+function DriveStatusLine({ status, lastSyncedAt, errorMsg }) {
+  const map = {
+    disconnected: { icon: CloudOff, text: "Chưa kết nối Google Drive", color: "var(--text-muted)" },
+    connecting: { icon: RefreshCw, text: "Đang kết nối...", color: "var(--gold)", spin: true },
+    syncing: { icon: RefreshCw, text: "Đang đồng bộ...", color: "var(--gold)", spin: true },
+    synced: { icon: Cloud, text: lastSyncedAt ? `Đã đồng bộ lúc ${lastSyncedAt.toLocaleTimeString("vi-VN")}` : "Đã đồng bộ", color: "var(--green)" },
+    offline: { icon: WifiOff, text: "Mất mạng — sẽ tự đồng bộ khi có mạng", color: "var(--gold)" },
+    error: { icon: CloudOff, text: errorMsg || "Lỗi đồng bộ", color: "var(--red)" },
+    conflict: { icon: AlertCircle, text: "Dữ liệu khác nhau giữa máy và Drive", color: "var(--red)" },
+  };
+  const m = map[status] || map.disconnected;
+  const Ic = m.icon;
+  return (
+    <div className="mv-drive-status" style={{ color: m.color }}>
+      <Ic size={13} className={m.spin ? "mv-spin" : ""} />
+      <span>{m.text}</span>
+    </div>
+  );
+}
+
+function DriveSettingsModal({ drive, onClose }) {
+  const [idInput, setIdInput] = useState(drive.clientId);
+  const hasId = !!drive.clientId;
+  const isConnected = drive.status !== "disconnected" && drive.status !== "error" && hasId;
+
+  return (
+    <Modal title="Đồng bộ Google Drive" onClose={onClose} wide>
+      <p className="mv-drive-intro">
+        Dữ liệu công ty sẽ được lưu vào một file riêng trong Google Drive của bạn
+        (chỉ app này truy cập được file đó, không đụng tới các file khác trong Drive).
+        App vẫn hoạt động khi mất mạng — dữ liệu tự đồng bộ lại khi có mạng.
+      </p>
+
+      <Field label="Google OAuth Client ID">
+        <input
+          className="mv-input"
+          placeholder="xxxxxxxx.apps.googleusercontent.com"
+          value={idInput}
+          onChange={(e) => setIdInput(e.target.value)}
+        />
+      </Field>
+      <button
+        className="mv-btn mv-btn-ghost mv-btn-sm"
+        style={{ marginBottom: 14 }}
+        onClick={() => drive.saveClientId(idInput)}
+        disabled={!idInput.trim()}
+      >
+        Lưu Client ID
+      </button>
+
+      <div className="mv-drive-divider" />
+
+      <DriveStatusLine status={drive.status} lastSyncedAt={drive.lastSyncedAt} errorMsg={drive.errorMsg} />
+
+      <div className="mv-modal-actions" style={{ justifyContent: "flex-start", marginTop: 14 }}>
+        {!isConnected ? (
+          <button className="mv-btn mv-btn-primary" disabled={!hasId} onClick={() => drive.connect(true)}>
+            <Cloud size={15} /> Kết nối Google Drive
+          </button>
+        ) : (
+          <button className="mv-btn mv-btn-ghost" onClick={drive.disconnect}>
+            <Unlink size={15} /> Ngắt kết nối
+          </button>
+        )}
+      </div>
+
+      <p className="mv-drive-hint">
+        Chưa có Client ID? Làm theo hướng dẫn "Thiết lập Google Drive" đi kèm để lấy trong vài phút.
+      </p>
+    </Modal>
+  );
+}
+
+function DriveConflictModal({ conflict, onResolve }) {
+  const localCount = conflict.local?.projects?.length || 0;
+  const remoteCount = conflict.remote?.projects?.length || 0;
+  const localTime = conflict.local?._meta?.updatedAt ? new Date(conflict.local._meta.updatedAt).toLocaleString("vi-VN") : "không rõ";
+  const remoteTime = conflict.remote?._meta?.updatedAt ? new Date(conflict.remote._meta.updatedAt).toLocaleString("vi-VN") : "không rõ";
+  return (
+    <Modal title="Dữ liệu không khớp" onClose={() => {}}>
+      <p className="mv-drive-intro">
+        Dữ liệu trên máy này khác với dữ liệu đang lưu trên Google Drive. Chọn bản bạn muốn giữ
+        (bản còn lại sẽ bị ghi đè).
+      </p>
+      <div className="mv-conflict-grid">
+        <div className="mv-conflict-card">
+          <div className="mv-detail-label">Trên máy này</div>
+          <div className="mv-detail-value">{localCount} dự án</div>
+          <div className="mv-row-sub mv-mono-date">Cập nhật {localTime}</div>
+          <button className="mv-btn mv-btn-primary mv-btn-sm" style={{ marginTop: 10 }} onClick={() => onResolve("local")}>Dùng bản này</button>
+        </div>
+        <div className="mv-conflict-card">
+          <div className="mv-detail-label">Trên Google Drive</div>
+          <div className="mv-detail-value">{remoteCount} dự án</div>
+          <div className="mv-row-sub mv-mono-date">Cập nhật {remoteTime}</div>
+          <button className="mv-btn mv-btn-primary mv-btn-sm" style={{ marginTop: 10 }} onClick={() => onResolve("remote")}>Dùng bản này</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ----------------------------------- shell ------------------------------------ */
+
+function App() {
+  const { data, loading, saveError, persist, resetToSample, clearAll, drive } = useAppData();
+  const [view, setView] = useState("dashboard");
+  const [activeProjectId, setActiveProjectId] = useState(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [showDriveModal, setShowDriveModal] = useState(false);
+
+  const openProject = (id) => { setActiveProjectId(id); setView("project"); };
+
+  const NAV = [
+    { id: "dashboard", label: "Tổng quan", icon: LayoutDashboard },
+    { id: "projects", label: "Dự án", icon: Film },
+    { id: "personnel", label: "Nhân sự", icon: Users },
+  ];
+
+  return (
+    <div className="mv-app">
+      <style>{CSS}</style>
+      <div className="mv-shell">
+        <aside className="mv-sidebar">
+          <div className="mv-brand">
+            <div className="mv-brand-mark">
+              <div className="mv-brand-stripe" /><div className="mv-brand-stripe" /><div className="mv-brand-stripe" />
+            </div>
+            <div>
+              <div className="mv-brand-title">STUDIO SLATE</div>
+              <div className="mv-brand-sub">Quản lý sản xuất MV</div>
+            </div>
+          </div>
+          <nav className="mv-nav">
+            {NAV.map((n) => (
+              <button
+                key={n.id}
+                className={`mv-nav-item ${view === n.id || (n.id === "projects" && view === "project") ? "mv-nav-active" : ""}`}
+                onClick={() => { setView(n.id); setActiveProjectId(null); }}
+              >
+                <n.icon size={17} /> {n.label}
+              </button>
+            ))}
+          </nav>
+          <div className="mv-sidebar-footer">
+            {saveError && <div className="mv-save-error">Lưu dữ liệu thất bại. Thay đổi có thể chưa được lưu.</div>}
+
+            <button className="mv-drive-trigger" onClick={() => setShowDriveModal(true)}>
+              <DriveStatusLine status={drive.status} lastSyncedAt={drive.lastSyncedAt} errorMsg={drive.errorMsg} />
+              <Settings size={13} />
+            </button>
+
+            {confirmReset ? (
+              <div className="mv-reset-confirm">
+                <span>Khôi phục dữ liệu mẫu? Toàn bộ dữ liệu hiện tại sẽ mất.</span>
+                <div>
+                  <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setConfirmReset(false)}>Huỷ</button>
+                  <button className="mv-btn mv-btn-danger mv-btn-sm" onClick={() => { resetToSample(); setConfirmReset(false); }}>Khôi phục</button>
+                </div>
+              </div>
+            ) : (
+              <button className="mv-reset-link" onClick={() => setConfirmReset(true)}>Khôi phục dữ liệu mẫu</button>
+            )}
+          </div>
+        </aside>
+
+        <main className="mv-main">
+          {loading || !data ? (
+            <div className="mv-loading"><Loader2 className="mv-spin" size={22} /> Đang tải dữ liệu...</div>
+          ) : (
+            <>
+              {view === "dashboard" && <Dashboard data={data} openProject={openProject} />}
+              {view === "projects" && <ProjectsList data={data} persist={persist} openProject={openProject} />}
+              {view === "project" && <ProjectDetail data={data} persist={persist} projectId={activeProjectId} back={() => setView("projects")} />}
+              {view === "personnel" && <PersonnelPage data={data} persist={persist} />}
+            </>
+          )}
+        </main>
+      </div>
+
+      {showDriveModal && <DriveSettingsModal drive={drive} onClose={() => setShowDriveModal(false)} />}
+      {drive.conflict && <DriveConflictModal conflict={drive.conflict} onResolve={drive.resolveConflict} />}
+    </div>
+  );
+}
+
+
+/* ----------------------------------- styles ------------------------------------ */
+
+const CSS = `
+.mv-drive-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; width: 100%; font-family: inherit; }
+.mv-drive-trigger:hover { border-color: var(--gold); }
+.mv-drive-status { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
+.mv-drive-intro { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin: 0 0 16px; }
+.mv-drive-hint { font-size: 11.5px; color: var(--text-muted); margin-top: 16px; }
+.mv-drive-divider { height: 1px; background: var(--border); margin: 4px 0 14px; }
+.mv-conflict-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.mv-conflict-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; }
+
+.mv-app {
+  --bg: #14120F;
+  --surface: #1D1A16;
+  --surface-2: #24211C;
+  --border: #322D26;
+  --gold: #D4A537;
+  --teal: #3FA9A0;
+  --green: #5FB77E;
+  --red: #C1443C;
+  --text: #F5F1E8;
+  --text-muted: #9C948A;
+  font-family: 'Inter', -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.mv-app * { box-sizing: border-box; }
+.mv-shell { display: flex; min-height: 640px; }
+
+.mv-sidebar {
+  width: 220px; flex-shrink: 0; background: var(--surface);
+  border-right: 1px solid var(--border); padding: 20px 14px;
+  display: flex; flex-direction: column; justify-content: space-between;
+}
+.mv-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; padding: 0 4px; }
+.mv-brand-mark { width: 30px; height: 30px; border: 2px solid var(--gold); border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; transform: rotate(-6deg); }
+.mv-brand-stripe { flex: 1; background: var(--gold); }
+.mv-brand-stripe:nth-child(2) { background: var(--bg); }
+.mv-brand-title { font-family: 'Oswald', sans-serif; font-weight: 600; letter-spacing: 0.06em; font-size: 14px; }
+.mv-brand-sub { font-size: 11px; color: var(--text-muted); }
+.mv-nav { display: flex; flex-direction: column; gap: 3px; }
+.mv-nav-item {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px;
+  background: none; border: none; color: var(--text-muted); font-size: 13.5px; font-weight: 500;
+  cursor: pointer; text-align: left; font-family: inherit;
+}
+.mv-nav-item:hover { background: var(--surface-2); color: var(--text); }
+.mv-nav-active { background: var(--surface-2); color: var(--gold); }
+.mv-sidebar-footer { display: flex; flex-direction: column; gap: 8px; }
+.mv-reset-link { background: none; border: none; color: var(--text-muted); font-size: 11.5px; cursor: pointer; text-decoration: underline; text-align: left; padding: 0; }
+.mv-reset-confirm { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 11.5px; color: var(--text-muted); display: flex; flex-direction: column; gap: 8px; }
+.mv-save-error { font-size: 11px; color: var(--red); }
+
+.mv-main { flex: 1; padding: 26px 30px; overflow-y: auto; max-height: 90vh; }
+.mv-loading { display: flex; align-items: center; gap: 10px; color: var(--text-muted); padding: 60px 0; justify-content: center; }
+.mv-spin { animation: mv-spin 1s linear infinite; }
+@keyframes mv-spin { to { transform: rotate(360deg); } }
+
+.mv-stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+.mv-stats-row-sm { grid-template-columns: repeat(3, 1fr); margin-bottom: 16px; }
+.mv-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.mv-stat-label { font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+.mv-stat-value { font-family: 'JetBrains Mono', monospace; font-size: 19px; font-weight: 600; }
+.mv-stat-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+.mv-dash-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; }
+.mv-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+.mv-panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.mv-panel-title { display: flex; align-items: center; gap: 8px; font-family: 'Oswald', sans-serif; font-size: 14px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text); margin: 0 0 14px 0; }
+.mv-panel-head .mv-panel-title { margin-bottom: 0; }
+
+.mv-mini-row { padding: 10px 8px; border-radius: 8px; cursor: pointer; border-bottom: 1px solid var(--border); }
+.mv-mini-row:last-child { border-bottom: none; }
+.mv-mini-row:hover { background: var(--surface-2); }
+.mv-mini-row-main { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.mv-mini-name { font-size: 13.5px; font-weight: 500; }
+.mv-mini-sub { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+.mv-progress { position: relative; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; border: 1px solid var(--border); }
+.mv-progress-fill { height: 100%; background: linear-gradient(90deg, var(--gold), var(--teal)); border-radius: 3px; transition: width 0.3s; }
+
+.mv-badge {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+  padding: 3px 8px; border-radius: 20px; background: color-mix(in srgb, var(--badge-color) 16%, transparent);
+  color: var(--badge-color); white-space: nowrap;
+}
+
+.mv-toolbar { display: flex; gap: 10px; margin-bottom: 18px; align-items: center; }
+.mv-search { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; flex: 1; color: var(--text-muted); }
+.mv-search input { background: none; border: none; outline: none; color: var(--text); font-size: 13.5px; width: 100%; font-family: inherit; }
+.mv-filter { width: 170px; }
+
+.mv-input {
+  width: 100%; background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 7px; padding: 8px 10px; font-size: 13.5px; font-family: inherit; outline: none;
+}
+.mv-input:focus { border-color: var(--gold); }
+
+.mv-btn {
+  display: inline-flex; align-items: center; gap: 6px; border: none; border-radius: 8px;
+  padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.mv-btn-sm { padding: 6px 10px; font-size: 12px; }
+.mv-btn-primary { background: var(--gold); color: #1D1A16; }
+.mv-btn-primary:hover { filter: brightness(1.08); }
+.mv-btn-ghost { background: none; color: var(--text-muted); border: 1px solid var(--border); }
+.mv-btn-ghost:hover { color: var(--text); }
+.mv-btn-danger { background: var(--red); color: #fff; }
+
+.mv-icon-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 6px; border-radius: 6px; display: inline-flex; }
+.mv-icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.mv-icon-btn-light { color: rgba(255,255,255,0.75); }
+.mv-icon-btn-light:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+.mv-empty-note { color: var(--text-muted); font-size: 13px; padding: 10px 2px; }
+
+.mv-slate-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 16px; }
+.mv-slate { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.mv-slate-confirm { padding: 14px; }
+.mv-slate-clap { height: 26px; background: repeating-linear-gradient(-45deg, #0F0D0B, #0F0D0B 10px, var(--gold) 10px, var(--gold) 20px); position: relative; display: flex; justify-content: flex-end; align-items: center; padding: 0 6px; }
+.mv-slate-clap-actions { display: flex; gap: 2px; background: rgba(0,0,0,0.35); border-radius: 6px; padding: 1px; }
+.mv-slate-body { padding: 16px; cursor: pointer; }
+.mv-slate-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; margin-bottom: 6px; gap: 10px; }
+.mv-slate-row span { color: var(--text-muted); font-size: 10.5px; letter-spacing: 0.06em; }
+.mv-slate-row strong { font-weight: 600; text-align: right; }
+.mv-slate-footer { display: flex; justify-content: space-between; align-items: center; margin: 10px 0 8px; }
+.mv-slate-open { display: flex; align-items: center; justify-content: flex-end; gap: 3px; font-size: 12px; color: var(--gold); margin-top: 10px; font-weight: 600; }
+
+.mv-mono-date, .mv-mono-money { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-muted); }
+.mv-mono-money { color: var(--text); font-weight: 600; }
+
+.mv-back { background: none; border: none; color: var(--text-muted); display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; margin-bottom: 16px; padding: 0; font-family: inherit; }
+.mv-back:hover { color: var(--text); }
+
+.mv-project-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
+.mv-eyebrow { font-size: 10.5px; letter-spacing: 0.1em; color: var(--gold); font-weight: 700; margin-bottom: 4px; }
+.mv-project-head h2 { font-family: 'Oswald', sans-serif; font-size: 24px; margin: 0 0 4px; font-weight: 600; }
+.mv-project-sub { color: var(--text-muted); font-size: 13px; }
+
+.mv-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+.mv-tab { display: flex; align-items: center; gap: 6px; background: none; border: none; color: var(--text-muted); padding: 9px 14px; font-size: 13px; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; font-family: inherit; }
+.mv-tab:hover { color: var(--text); }
+.mv-tab-active { color: var(--gold); border-bottom-color: var(--gold); }
+
+.mv-overview-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+.mv-detail-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+.mv-detail-value { font-size: 15px; font-weight: 600; }
+.mv-overview-progress { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.mv-overview-progress .mv-progress { flex: 1; }
+.mv-inline-progress-edit input { width: 100%; accent-color: var(--gold); }
+.mv-desc { color: var(--text-muted); font-size: 13.5px; line-height: 1.6; margin: 4px 0 0; }
+
+.mv-row-card { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--border); }
+.mv-row-card:last-child { border-bottom: none; }
+.mv-row-title { font-weight: 600; font-size: 13.5px; display: flex; align-items: center; gap: 8px; }
+.mv-row-sub { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+.mv-row-right { display: flex; align-items: center; gap: 8px; }
+.mv-row-txn-icon { display: flex; }
+
+.mv-filmstrip { position: relative; padding-left: 4px; }
+.mv-milestone { display: flex; align-items: center; gap: 12px; padding: 12px 4px; border-bottom: 1px dashed var(--border); }
+.mv-milestone:last-child { border-bottom: none; }
+.mv-milestone-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.mv-milestone-body { flex: 1; }
+
+.mv-crew-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.mv-crew-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; gap: 12px; align-items: flex-start; }
+.mv-crew-avatar { width: 40px; height: 40px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--gold); color: var(--gold); display: flex; align-items: center; justify-content: center; font-weight: 700; font-family: 'Oswald', sans-serif; flex-shrink: 0; }
+.mv-crew-info { flex: 1; }
+.mv-crew-contact { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--text-muted); margin: 6px 0; }
+.mv-crew-contact span { display: flex; align-items: center; gap: 5px; }
+.mv-crew-actions { flex-direction: column; }
+
+.mv-modal-overlay { position: fixed; inset: 0; background: rgba(10,9,7,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+.mv-modal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; width: 420px; max-width: 100%; max-height: 85vh; overflow-y: auto; }
+.mv-modal-wide { width: 560px; }
+.mv-modal-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+.mv-modal-head h3 { margin: 0; font-family: 'Oswald', sans-serif; font-size: 16px; font-weight: 600; }
+.mv-modal-body { padding: 18px; }
+.mv-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.mv-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.mv-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+
+.mv-confirm { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: color-mix(in srgb, var(--red) 12%, var(--surface)); border: 1px solid var(--red); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; }
+.mv-confirm > span { flex: 1; }
+
+@media (max-width: 860px) {
+  .mv-shell { flex-direction: column; }
+  .mv-sidebar { width: 100%; flex-direction: row; align-items: center; }
+  .mv-nav { flex-direction: row; }
+  .mv-sidebar-footer { display: none; }
+  .mv-dash-grid, .mv-overview-grid, .mv-form-grid { grid-template-columns: 1fr; }
+  .mv-stats-row { grid-template-columns: repeat(2, 1fr); }
+}
+`;
+
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+
+</script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>
