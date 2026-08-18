@@ -1101,22 +1101,76 @@ function TransactionForm({ initial, onSave, onClose }) {
 /* -------------------------------- dashboard ---------------------------------- */
 
 function Dashboard({ data, openProject }) {
-  const { projects, transactions, milestones } = data;
+  const { projects, milestones, contracts, lineItems } = data;
   const active = projects.filter((p) => !["Hoàn thành", "Tạm dừng"].includes(p.status));
-  const totalThu = transactions.filter((t) => t.type === "Thu").reduce((s, t) => s + t.amount, 0);
-  const totalChi = transactions.filter((t) => t.type === "Chi").reduce((s, t) => s + t.amount, 0);
+
+  const revenueOf = (projectId) => contracts.filter((c) => c.projectId === projectId).reduce((s, c) => s + c.value, 0);
+  const costOf = (projectId) => lineItems.filter((l) => l.projectId === projectId).reduce((s, l) => s + l.actualValue, 0);
+
+  const totalThu = projects.reduce((s, p) => s + revenueOf(p.id), 0);
+  const totalChi = projects.reduce((s, p) => s + costOf(p.id), 0);
+  const totalProfit = totalThu - totalChi;
+
   const upcoming = milestones
     .filter((m) => m.status !== "Hoàn thành")
     .sort((a, b) => new Date(a.date) - new Date(b.date))
     .slice(0, 6);
 
+  // Group revenue/profit by the month each project starts in.
+  const monthMap = {};
+  projects.forEach((p) => {
+    if (!p.startDate) return;
+    const dt = new Date(p.startDate);
+    if (isNaN(dt)) return;
+    const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
+    const revenue = revenueOf(p.id);
+    const cost = costOf(p.id);
+    if (!monthMap[key]) monthMap[key] = { key, year: dt.getFullYear(), month: dt.getMonth(), revenue: 0, cost: 0 };
+    monthMap[key].revenue += revenue;
+    monthMap[key].cost += cost;
+  });
+  const monthlyRows = Object.values(monthMap).sort((a, b) => (a.key < b.key ? 1 : -1));
+
   return (
     <div>
-      <div className="mv-stats-row">
+      <div className="mv-stats-row mv-stats-row-5">
         <StatCard label="Tổng số dự án" value={projects.length} />
         <StatCard label="Đang triển khai" value={active.length} tone="#D4A537" />
         <StatCard label="Tổng doanh thu" value={fmtVND(totalThu)} tone="#5FB77E" />
         <StatCard label="Tổng chi phí" value={fmtVND(totalChi)} tone="#C1443C" />
+        <StatCard label="Tổng lợi nhuận" value={fmtVND(totalProfit)} tone={totalProfit >= 0 ? "#D4A537" : "#C1443C"} />
+      </div>
+
+      <div className="mv-panel">
+        <h3 className="mv-panel-title"><Wallet size={16} /> Doanh thu &amp; lợi nhuận theo tháng</h3>
+        {monthlyRows.length === 0 ? (
+          <p className="mv-empty-note">Chưa có dự án nào có ngày bắt đầu để thống kê theo tháng.</p>
+        ) : (
+          <table className="mv-quote-table">
+            <thead>
+              <tr>
+                <th>Tháng</th>
+                <th>Doanh thu</th>
+                <th>Chi phí</th>
+                <th>Lợi nhuận</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monthlyRows.map((row) => {
+                const profit = row.revenue - row.cost;
+                return (
+                  <tr key={row.key}>
+                    <td>{MONTH_LABELS[row.month]} {row.year}</td>
+                    <td className="mv-mono-money" style={{ color: "#5FB77E" }}>{fmtVND(row.revenue)}</td>
+                    <td className="mv-mono-money" style={{ color: "#C1443C" }}>{fmtVND(row.cost)}</td>
+                    <td className="mv-quote-amount-cell mv-mono-money" style={{ color: profit >= 0 ? "#D4A537" : "#C1443C" }}>{fmtVND(profit)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        <p className="mv-row-sub" style={{ marginTop: 10 }}>* Tính theo tháng bắt đầu của dự án (ngày bắt đầu trong "Tổng quan" dự án).</p>
       </div>
 
       <div className="mv-dash-grid">
@@ -2286,6 +2340,7 @@ const CSS = `
 
 .mv-stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
 .mv-stats-row-sm { grid-template-columns: repeat(4, 1fr); margin-bottom: 16px; }
+.mv-stats-row-5 { grid-template-columns: repeat(5, 1fr); }
 .mv-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
 .mv-stat-label { font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
 .mv-stat-value { font-family: 'JetBrains Mono', monospace; font-size: 19px; font-weight: 600; }
@@ -2509,6 +2564,7 @@ const CSS = `
   .mv-stats-row { grid-template-columns: repeat(2, 1fr); }
   .mv-lineitem-cols { grid-template-columns: repeat(2, 1fr); }
   .mv-cashflow-grid { grid-template-columns: repeat(2, 1fr); }
+  .mv-stats-row-5 { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media print {
