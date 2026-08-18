@@ -86,6 +86,95 @@ const Unlink = (p) => <Icon {...p}><path d="M18.84 12.25l1.72-1.71h-.02a5.004 5.
 const Settings = (p) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></Icon>;
 const WifiOff = (p) => <Icon {...p}><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></Icon>;
 
+
+
+/* ---------------------------------- utils ---------------------------------- */
+
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const STORAGE_KEY = "mv_studio_data_v1";
+
+const fmtVND = (n) =>
+  (Number(n) || 0).toLocaleString("vi-VN") + " ₫";
+
+const fmtDate = (d) => {
+  if (!d) return "—";
+  const dt = new Date(d);
+  if (isNaN(dt)) return d;
+  return dt.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+};
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+const PROJECT_STATUSES = ["Chưa bắt đầu", "Tiền kỳ", "Đang quay", "Hậu kỳ", "Hoàn thành", "Tạm dừng"];
+const CONTRACT_STATUSES = ["Chờ ký", "Đã ký", "Hết hạn"];
+const MILESTONE_STATUSES = ["Chưa bắt đầu", "Đang thực hiện", "Hoàn thành", "Trễ hạn"];
+const TXN_TYPES = ["Thu", "Chi"];
+const ROLE_SUGGESTIONS = [
+  "Đạo diễn", "Biên kịch", "Quay phim (DOP)", "Trợ lý đạo diễn", "Dựng phim",
+  "Kỹ xảo (VFX)", "Ánh sáng", "Âm thanh", "Trang điểm", "Phục trang",
+  "Sản xuất (Producer)", "Diễn viên", "Vũ công", "Đạo diễn hình ảnh",
+];
+
+const STATUS_META = {
+  "Chưa bắt đầu": { color: "#9C948A", icon: Circle },
+  "Tiền kỳ": { color: "#3FA9A0", icon: Clock },
+  "Đang quay": { color: "#D4A537", icon: Clock },
+  "Hậu kỳ": { color: "#3FA9A0", icon: Clock },
+  "Hoàn thành": { color: "#5FB77E", icon: CheckCircle2 },
+  "Tạm dừng": { color: "#C1443C", icon: PauseCircle },
+  "Chờ ký": { color: "#D4A537", icon: Clock },
+  "Đã ký": { color: "#5FB77E", icon: CheckCircle2 },
+  "Hết hạn": { color: "#C1443C", icon: AlertCircle },
+  "Đang thực hiện": { color: "#D4A537", icon: Clock },
+  "Trễ hạn": { color: "#C1443C", icon: AlertCircle },
+};
+
+const seedData = () => {
+  const p1 = uid(), p2 = uid(), p3 = uid();
+  const s1 = uid(), s2 = uid(), s3 = uid(), s4 = uid();
+  return {
+    projects: [
+      { id: p1, name: "Cơn Mưa Ngang Qua", client: "Lam Studio Music", director: "Nguyễn Hải Đăng", status: "Đang quay", progress: 55, startDate: "2026-07-01", endDate: "2026-09-15", budget: 450000000, description: "MV ballad, bối cảnh Đà Lạt, ê-kíp 20 người." },
+      { id: p2, name: "Neon Sài Gòn", client: "Việt Wave Entertainment", director: "Trần Bảo Ngọc", status: "Hậu kỳ", progress: 80, startDate: "2026-05-10", endDate: "2026-08-25", budget: 620000000, description: "MV dance, quay đêm nội thành, nhiều VFX." },
+      { id: p3, name: "Về Nhà Thôi", client: "Gia Đình Media", director: "Nguyễn Hải Đăng", status: "Chưa bắt đầu", progress: 0, startDate: "2026-09-01", endDate: "2026-11-01", budget: 300000000, description: "MV acoustic, quay tại Hội An." },
+    ],
+    contracts: [
+      { id: uid(), projectId: p1, contractNumber: "HD-2026-014", value: 450000000, signedDate: "2026-06-20", status: "Đã ký", paymentTerms: "30% tạm ứng - 40% giữa tiến độ - 30% nghiệm thu", notes: "" },
+      { id: uid(), projectId: p2, contractNumber: "HD-2026-011", value: 620000000, signedDate: "2026-04-28", status: "Đã ký", paymentTerms: "50% tạm ứng - 50% bàn giao", notes: "" },
+      { id: uid(), projectId: p3, contractNumber: "HD-2026-020", value: 300000000, signedDate: "", status: "Chờ ký", paymentTerms: "Đang thương lượng", notes: "Chờ khách duyệt kịch bản" },
+    ],
+    milestones: [
+      { id: uid(), projectId: p1, name: "Chốt kịch bản & storyboard", date: "2026-07-05", status: "Hoàn thành" },
+      { id: uid(), projectId: p1, name: "Quay ngày 1-3 tại Đà Lạt", date: "2026-08-01", status: "Hoàn thành" },
+      { id: uid(), projectId: p1, name: "Dựng bản nháp", date: "2026-08-25", status: "Đang thực hiện" },
+      { id: uid(), projectId: p1, name: "Bàn giao bản final", date: "2026-09-15", status: "Chưa bắt đầu" },
+      { id: uid(), projectId: p2, name: "Quay đêm bối cảnh phố", date: "2026-06-10", status: "Hoàn thành" },
+      { id: uid(), projectId: p2, name: "Xử lý VFX", date: "2026-08-10", status: "Đang thực hiện" },
+      { id: uid(), projectId: p2, name: "Duyệt bản màu (color grading)", date: "2026-08-20", status: "Chưa bắt đầu" },
+    ],
+    personnel: [
+      { id: s1, name: "Nguyễn Hải Đăng", role: "Đạo diễn", phone: "0901 234 567", email: "dang.director@studio.vn", dayRate: 8000000 },
+      { id: s2, name: "Lê Minh Quân", role: "Quay phim (DOP)", phone: "0912 345 678", email: "quan.dop@studio.vn", dayRate: 6000000 },
+      { id: s3, name: "Phạm Thu Trang", role: "Dựng phim", phone: "0923 456 789", email: "trang.editor@studio.vn", dayRate: 4000000 },
+      { id: s4, name: "Đỗ Anh Tuấn", role: "Kỹ xảo (VFX)", phone: "0934 567 890", email: "tuan.vfx@studio.vn", dayRate: 5000000 },
+    ],
+    assignments: [
+      { id: uid(), projectId: p1, personnelId: s1, roleInProject: "Đạo diễn", fee: 40000000 },
+      { id: uid(), projectId: p1, personnelId: s2, roleInProject: "Quay phim chính", fee: 30000000 },
+      { id: uid(), projectId: p1, personnelId: s3, roleInProject: "Dựng phim", fee: 18000000 },
+      { id: uid(), projectId: p2, personnelId: s2, roleInProject: "Quay phim chính", fee: 32000000 },
+      { id: uid(), projectId: p2, personnelId: s4, roleInProject: "Kỹ xảo VFX", fee: 45000000 },
+    ],
+    transactions: [
+      { id: uid(), projectId: p1, type: "Thu", amount: 135000000, date: "2026-06-22", category: "Tạm ứng hợp đồng", description: "30% tạm ứng từ Lam Studio Music" },
+      { id: uid(), projectId: p1, type: "Chi", amount: 45000000, date: "2026-07-30", category: "Bối cảnh & đạo cụ", description: "Thuê địa điểm Đà Lạt 3 ngày" },
+      { id: uid(), projectId: p1, type: "Chi", amount: 40000000, date: "2026-08-05", category: "Nhân sự", description: "Tạm ứng lương ê-kíp quay" },
+      { id: uid(), projectId: p2, type: "Thu", amount: 310000000, date: "2026-05-02", category: "Tạm ứng hợp đồng", description: "50% tạm ứng từ Việt Wave" },
+      { id: uid(), projectId: p2, type: "Chi", amount: 90000000, date: "2026-06-12", category: "Thiết bị", description: "Thuê flycam & đèn LED" },
+    ],
+  };
+};
+
 /* ------------------------------- constants --------------------------------- */
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -126,7 +215,9 @@ function useDriveSync(dataRef, applyRemoteData) {
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [conflict, setConflict] = useState(null); // { local, remote }
+  const [scriptReady, setScriptReady] = useState(false);
   const tokenClientRef = useRef(null);
+  const tokenClientForIdRef = useRef("");
   const accessTokenRef = useRef("");
   const fileIdRef = useRef(localStorage.getItem(LS_FILE_ID) || "");
   const pushTimer = useRef(null);
@@ -137,36 +228,79 @@ function useDriveSync(dataRef, applyRemoteData) {
     setClientId(id.trim());
   };
 
+  // Preload the Google Identity Services script + create the token client as
+  // soon as we have a Client ID, so that later, when the user actually clicks
+  // "Kết nối", requestAccessToken() runs synchronously inside the click
+  // handler (no pending network/script load in between) — otherwise browsers
+  // silently block the popup because the click's "user gesture" has expired.
+  useEffect(() => {
+    if (!clientId) { setScriptReady(false); return; }
+    let cancelled = false;
+    setScriptReady(false);
+    loadGoogleScript()
+      .then(() => {
+        if (cancelled) return;
+        if (tokenClientForIdRef.current !== clientId) {
+          tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+            client_id: clientId,
+            scope: DRIVE_SCOPE,
+            callback: () => {},
+          });
+          tokenClientForIdRef.current = clientId;
+        }
+        setScriptReady(true);
+      })
+      .catch(() => { if (!cancelled) setScriptReady(false); });
+    return () => { cancelled = true; };
+  }, [clientId]);
+
   const ensureTokenClient = useCallback(async () => {
     if (!clientId) throw new Error("Chưa có Client ID.");
+    if (tokenClientForIdRef.current === clientId && tokenClientRef.current) {
+      return tokenClientRef.current;
+    }
     await loadGoogleScript();
-    if (!tokenClientRef.current) {
+    if (tokenClientForIdRef.current !== clientId) {
       tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
         client_id: clientId,
         scope: DRIVE_SCOPE,
         callback: () => {},
       });
+      tokenClientForIdRef.current = clientId;
     }
     return tokenClientRef.current;
   }, [clientId]);
 
   const requestToken = useCallback((interactive) => {
-    return new Promise(async (resolve, reject) => {
-      try {
-        const tc = await ensureTokenClient();
+    return new Promise((resolve, reject) => {
+      // Synchronous fast path: token client already warmed up, so this call
+      // to requestAccessToken happens directly inside the caller's click
+      // handler stack, preserving the browser's "real click" permission.
+      if (tokenClientForIdRef.current === clientId && tokenClientRef.current) {
+        const tc = tokenClientRef.current;
         tc.callback = (resp) => {
           if (resp.error) reject(new Error(resp.error));
-          else {
-            accessTokenRef.current = resp.access_token;
-            resolve(resp.access_token);
-          }
+          else { accessTokenRef.current = resp.access_token; resolve(resp.access_token); }
         };
         tc.requestAccessToken({ prompt: interactive ? "consent" : "" });
-      } catch (e) {
-        reject(e);
+        return;
       }
+      // Fallback (script not preloaded yet): may be blocked as a popup on
+      // some browsers since it involves an await first.
+      (async () => {
+        try {
+          const tc = await ensureTokenClient();
+          tc.callback = (resp) => {
+            if (resp.error) reject(new Error(resp.error));
+            else { accessTokenRef.current = resp.access_token; resolve(resp.access_token); }
+          };
+          tc.requestAccessToken({ prompt: interactive ? "consent" : "" });
+        } catch (e) {
+          reject(e);
+        }
+      })();
     });
-  }, [ensureTokenClient]);
+  }, [ensureTokenClient, clientId]);
 
   const driveFetch = useCallback(async (url, opts = {}, retry = true) => {
     const token = accessTokenRef.current;
@@ -335,7 +469,7 @@ function useDriveSync(dataRef, applyRemoteData) {
     return () => window.removeEventListener("online", onOnline);
   }, [schedulePush, dataRef]);
 
-  return { clientId, saveClientId, status, lastSyncedAt, errorMsg, conflict, connect, disconnect, resolveConflict, schedulePush };
+  return { clientId, saveClientId, status, lastSyncedAt, errorMsg, conflict, connect, disconnect, resolveConflict, schedulePush, scriptReady };
 }
 
 /* ------------------------------- app data hook -------------------------------- */
@@ -1219,8 +1353,12 @@ function DriveSettingsModal({ drive, onClose }) {
 
       <div className="mv-modal-actions" style={{ justifyContent: "flex-start", marginTop: 14 }}>
         {!isConnected ? (
-          <button className="mv-btn mv-btn-primary" disabled={!hasId} onClick={() => drive.connect(true)}>
-            <Cloud size={15} /> Kết nối Google Drive
+          <button
+            className="mv-btn mv-btn-primary"
+            disabled={!hasId || !drive.scriptReady}
+            onClick={() => drive.connect(true)}
+          >
+            <Cloud size={15} /> {drive.scriptReady || !hasId ? "Kết nối Google Drive" : "Đang chuẩn bị..."}
           </button>
         ) : (
           <button className="mv-btn mv-btn-ghost" onClick={drive.disconnect}>
