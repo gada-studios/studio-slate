@@ -1430,7 +1430,6 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, time
   const todayKey = todayISO();
   const initialMonth = milestones.length > 0 ? new Date(milestones[0].date) : new Date();
   const [viewDate, setViewDate] = useState(new Date(initialMonth.getFullYear(), initialMonth.getMonth(), 1));
-  const [dragOverDay, setDragOverDay] = useState(null);
 
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
@@ -1463,7 +1462,6 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, time
 
   const handleDrop = (e, d) => {
     e.preventDefault();
-    setDragOverDay(null);
     try {
       const parsed = JSON.parse(e.dataTransfer.getData("text/plain"));
       const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -1512,10 +1510,10 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, time
             return (
               <div
                 key={i}
-                className={`mv-calendar-cell ${isToday ? "mv-calendar-cell-today" : ""} ${dragOverDay === d ? "mv-calendar-cell-dragover" : ""}`}
-                onDragOver={(e) => { e.preventDefault(); setDragOverDay(d); }}
-                onDragLeave={() => setDragOverDay((cur) => (cur === d ? null : cur))}
-                onDrop={(e) => handleDrop(e, d)}
+                className={`mv-calendar-cell ${isToday ? "mv-calendar-cell-today" : ""}`}
+                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; e.currentTarget.classList.add("mv-calendar-cell-dragover"); }}
+                onDragLeave={(e) => { e.currentTarget.classList.remove("mv-calendar-cell-dragover"); }}
+                onDrop={(e) => { e.currentTarget.classList.remove("mv-calendar-cell-dragover"); handleDrop(e, d); }}
               >
                 <div className="mv-calendar-daynum">{d}</div>
                 <div className="mv-calendar-chips">
@@ -2612,9 +2610,10 @@ const CSS = `
 .mv-calendar-chip {
   display: block; width: 100%; text-align: left; background: color-mix(in srgb, var(--chip-color) 20%, transparent);
   color: var(--text); border: none; border-left: 3px solid var(--chip-color); border-radius: 3px;
-  font-size: 10.5px; padding: 2px 5px; cursor: pointer; overflow: hidden; text-overflow: ellipsis;
+  font-size: 10.5px; padding: 2px 5px; cursor: grab; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; font-family: inherit;
 }
+.mv-calendar-chip:active { cursor: grabbing; }
 
 .mv-lineitem-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 10px; background: var(--surface-2); }
 .mv-lineitem-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
