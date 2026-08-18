@@ -107,6 +107,18 @@ const fmtDate = (d) => {
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+const downloadJSON = (obj, filename) => {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
 const PROJECT_STATUSES = ["Chưa bắt đầu", "Tiền kỳ", "Đang quay", "Hậu kỳ", "Hoàn thành", "Tạm dừng"];
 const CONTRACT_STATUSES = ["Chờ ký", "Đã ký", "Hết hạn"];
 const MILESTONE_STATUSES = ["Chưa bắt đầu", "Đang thực hiện", "Hoàn thành", "Trễ hạn"];
@@ -1695,6 +1707,19 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const assignedPersonnel = assignments.map((a) => ({ ...a, person: data.personnel.find((p) => p.id === a.personnelId) }));
   const availablePersonnel = data.personnel.filter((p) => !assignments.some((a) => a.personnelId === p.id));
 
+  const handleExportProject = () => {
+    const bundle = {
+      exportedAt: new Date().toISOString(),
+      project,
+      contracts,
+      milestones,
+      assignments: assignedPersonnel.map(({ person, ...a }) => a),
+      lineItems,
+    };
+    const safeName = project.name.replace(/[^a-zA-Z0-9À-ỹ ]/g, "").trim().replace(/\s+/g, "-");
+    downloadJSON(bundle, `du-an-${safeName}-${todayISO()}.json`);
+  };
+
   const TABS = [
     { id: "overview", label: "Tổng quan", icon: Film },
     { id: "contract", label: "Dòng tiền", icon: Wallet },
@@ -1712,7 +1737,10 @@ function ProjectDetail({ data, persist, projectId, back }) {
           <h2>{project.name}</h2>
           <div className="mv-project-sub">{project.client} · Đạo diễn {project.director || "—"}</div>
         </div>
-        <Badge status={project.status} />
+        <div className="mv-project-head-right">
+          <Badge status={project.status} />
+          <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={handleExportProject}><FileText size={13} /> Tải sao lưu dự án</button>
+        </div>
       </div>
 
       <div className="mv-tabs">
@@ -2235,9 +2263,36 @@ function App() {
   const [view, setView] = useState("dashboard");
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState("");
   const [showDriveModal, setShowDriveModal] = useState(false);
+  const [restoreError, setRestoreError] = useState("");
+  const restoreInputRef = useRef(null);
 
   const openProject = (id) => { setActiveProjectId(id); setView("project"); };
+
+  const handleDownloadBackup = () => {
+    if (!data) return;
+    downloadJSON(data, `studio-slate-backup-${todayISO()}.json`);
+  };
+
+  const handleRestoreFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setRestoreError("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        const normalized = normalizeData(parsed);
+        if (!Array.isArray(normalized.projects)) throw new Error("File không đúng định dạng.");
+        persist(normalized);
+      } catch (err) {
+        setRestoreError("Không đọc được file này — hãy chắc chắn đây là file sao lưu .json do app này tạo ra.");
+      }
+    };
+    reader.readAsText(file);
+  };
 
   const NAV = [
     { id: "dashboard", label: "Tổng quan", icon: LayoutDashboard },
@@ -2276,12 +2331,36 @@ function App() {
               <Settings size={13} />
             </button>
 
+            <div className="mv-backup-actions">
+              <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={handleDownloadBackup}>
+                <FileText size={13} /> Tải bản sao lưu
+              </button>
+              <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => restoreInputRef.current?.click()}>
+                <RefreshCw size={13} /> Khôi phục từ file
+              </button>
+              <input ref={restoreInputRef} type="file" accept="application/json" style={{ display: "none" }} onChange={handleRestoreFile} />
+            </div>
+            {restoreError && <div className="mv-save-error">{restoreError}</div>}
+
             {confirmReset ? (
               <div className="mv-reset-confirm">
-                <span>Khôi phục dữ liệu mẫu? Toàn bộ dữ liệu hiện tại sẽ mất.</span>
+                <span>Thao tác này sẽ <strong>xoá toàn bộ dữ liệu hiện tại</strong> và thay bằng dữ liệu mẫu. Gõ chính xác <strong>XOA</strong> để xác nhận:</span>
+                <input
+                  className="mv-input mv-btn-sm"
+                  style={{ marginTop: 6, marginBottom: 6 }}
+                  value={resetConfirmText}
+                  onChange={(e) => setResetConfirmText(e.target.value)}
+                  placeholder="Gõ XOA để xác nhận"
+                />
                 <div>
-                  <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setConfirmReset(false)}>Huỷ</button>
-                  <button className="mv-btn mv-btn-danger mv-btn-sm" onClick={() => { resetToSample(); setConfirmReset(false); }}>Khôi phục</button>
+                  <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => { setConfirmReset(false); setResetConfirmText(""); }}>Huỷ</button>
+                  <button
+                    className="mv-btn mv-btn-danger mv-btn-sm"
+                    disabled={resetConfirmText.trim().toUpperCase() !== "XOA"}
+                    onClick={() => { resetToSample(); setConfirmReset(false); setResetConfirmText(""); }}
+                  >
+                    Khôi phục
+                  </button>
                 </div>
               </div>
             ) : (
@@ -2363,6 +2442,8 @@ const CSS = `
 .mv-nav-item:hover { background: var(--surface-2); color: var(--text); }
 .mv-nav-active { background: var(--surface-2); color: var(--gold); }
 .mv-sidebar-footer { display: flex; flex-direction: column; gap: 8px; }
+.mv-backup-actions { display: flex; flex-direction: column; gap: 6px; }
+.mv-backup-actions .mv-btn { justify-content: flex-start; }
 .mv-reset-link { background: none; border: none; color: var(--text-muted); font-size: 11.5px; cursor: pointer; text-decoration: underline; text-align: left; padding: 0; }
 .mv-reset-confirm { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 11.5px; color: var(--text-muted); display: flex; flex-direction: column; gap: 8px; }
 .mv-save-error { font-size: 11px; color: var(--red); }
@@ -2449,7 +2530,8 @@ const CSS = `
 .mv-back { background: none; border: none; color: var(--text-muted); display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; margin-bottom: 16px; padding: 0; font-family: inherit; }
 .mv-back:hover { color: var(--text); }
 
-.mv-project-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
+.mv-project-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; gap: 12px; }
+.mv-project-head-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .mv-eyebrow { font-size: 10.5px; letter-spacing: 0.1em; color: var(--gold); font-weight: 700; margin-bottom: 4px; }
 .mv-project-head h2 { font-family: 'Oswald', sans-serif; font-size: 24px; margin: 0 0 4px; font-weight: 600; }
 .mv-project-sub { color: var(--text-muted); font-size: 13px; }
