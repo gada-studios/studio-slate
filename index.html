@@ -119,6 +119,412 @@ const downloadJSON = (obj, filename) => {
   URL.revokeObjectURL(url);
 };
 
+const downloadBlob = (blob, filename) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+function loadDocxScript() {
+  return new Promise((resolve, reject) => {
+    if (window.docx && window.docx.Document) { resolve(); return; }
+    const existing = document.getElementById("mv-docx-script");
+    if (existing) {
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error("Không tải được thư viện tạo file Word")));
+      return;
+    }
+    const s = document.createElement("script");
+    s.id = "mv-docx-script";
+    s.src = "https://unpkg.com/docx@9.7.1/dist/index.iife.js";
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Không tải được thư viện tạo file Word"));
+    document.head.appendChild(s);
+  });
+}
+
+function numberToVietnameseWords(num) {
+  num = Math.round(num);
+  if (num === 0) return "Không đồng";
+  const ones = ["", "một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám", "chín"];
+
+  function readGroup(n, isLeadingGroup) {
+    const h = Math.floor(n / 100);
+    const t = Math.floor((n % 100) / 10);
+    const u = n % 10;
+    let words = [];
+    if (h > 0) {
+      words.push(ones[h], "trăm");
+      if (t === 0 && u > 0) words.push("lẻ");
+    } else if (!isLeadingGroup && (t > 0 || u > 0)) {
+      words.push("không", "trăm");
+      if (t === 0 && u > 0) words.push("lẻ");
+    }
+    if (t > 1) {
+      words.push(ones[t], "mươi");
+      if (u === 1) words.push("mốt");
+      else if (u === 5) words.push("lăm");
+      else if (u > 0) words.push(ones[u]);
+    } else if (t === 1) {
+      words.push("mười");
+      if (u === 1) words.push("một");
+      else if (u === 5) words.push("lăm");
+      else if (u > 0) words.push(ones[u]);
+    } else if (t === 0 && u > 0) {
+      words.push(ones[u]);
+    }
+    return words.join(" ");
+  }
+
+  const unitNames = ["", "nghìn", "triệu", "tỷ"];
+  let groups = [];
+  let n = num;
+  while (n > 0) {
+    groups.unshift(n % 1000);
+    n = Math.floor(n / 1000);
+  }
+
+  let parts = [];
+  const total = groups.length;
+  groups.forEach((g, idx) => {
+    if (g === 0) return;
+    const isLeadingGroup = idx === 0;
+    const groupWords = readGroup(g, isLeadingGroup);
+    const unitIdx = total - 1 - idx;
+    parts.push(groupWords + (unitNames[unitIdx] ? " " + unitNames[unitIdx] : ""));
+  });
+
+  let result = parts.join(" ").replace(/\s+/g, " ").trim();
+  result = result.charAt(0).toUpperCase() + result.slice(1);
+  return result + " đồng";
+}
+
+/* --------------------------- contract .docx generator --------------------------- */
+
+const CONTRACT_COMPANY_A = {
+  name: "CÔNG TY TNHH GADA.STUDIOS",
+  representativeName: "PHAN ĐĂNG KHOA",
+  representativeTitle: "Giám Đốc",
+  address: "Tầng 2, Toà nhà Saigon Paragon, Số 3 Nguyễn Lương Bằng, Phường Tân Mỹ, Thành phố Hồ Chí Minh, Việt Nam",
+  taxCode: "0318648988",
+  bankName: "Quân đội MB bank",
+  bankAccount: "333636999",
+  email: "Gadastudios.info@gmail.com",
+  phone: "0962903533",
+};
+
+function fmtVNDLong(n) {
+  return (Math.round(n) || 0).toLocaleString("vi-VN") + " đồng";
+}
+function fmtDateVNLong(d) {
+  const dt = new Date(d);
+  if (isNaN(dt)) return "……";
+  return `ngày ${String(dt.getDate()).padStart(2, "0")} tháng ${String(dt.getMonth() + 1).padStart(2, "0")} năm ${dt.getFullYear()}`;
+}
+function daysBetweenInclusive(a, b) {
+  const ms = new Date(b) - new Date(a);
+  if (isNaN(ms)) return "…";
+  return Math.max(1, Math.round(ms / 86400000) + 1);
+}
+
+function buildContractDocument(data) {
+  const {
+    Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+    AlignmentType, WidthType, ShadingType, Header, Footer, PageNumber, TabStopType, TabStopPosition,
+  } = window.docx;
+
+  const { contractNumber, signedDate, clientB, project, lineItemGroups, subtotal, totalWithVat, payment1Amount, payment2Amount } = data;
+  const totalWords = numberToVietnameseWords(totalWithVat);
+  const days = daysBetweenInclusive(project.startDate, project.endDate);
+
+  const p = (text, opts = {}) => new Paragraph({
+    alignment: opts.align || AlignmentType.JUSTIFIED,
+    spacing: { after: 160 },
+    indent: opts.indent ? { left: opts.indent } : undefined,
+    children: [new TextRun({ text, bold: !!opts.bold, italics: !!opts.italics, size: opts.size || 22 })],
+  });
+  const pRuns = (runs) => new Paragraph({
+    alignment: AlignmentType.JUSTIFIED,
+    spacing: { after: 160 },
+    children: runs.map((r) => new TextRun({ text: r.text, bold: !!r.bold, size: 22 })),
+  });
+  const heading = (text) => new Paragraph({ spacing: { before: 240, after: 160 }, children: [new TextRun({ text, bold: true, size: 24 })] });
+  const fieldLine = (label, value) => new Paragraph({
+    spacing: { after: 60 },
+    tabStops: [{ type: TabStopType.LEFT, position: 2000 }],
+    children: [
+      new TextRun({ text: label, size: 22 }),
+      new TextRun({ text: "\t: ", size: 22 }),
+      new TextRun({ text: value || "", size: 22, bold: true }),
+    ],
+  });
+
+  const buildExpenseTable = () => {
+    const headerRow = new TableRow({
+      tableHeader: true,
+      children: ["Hạng mục", "SL", "Đơn giá", "Thành tiền"].map((t, i) => new TableCell({
+        width: { size: [4500, 1200, 1900, 1900][i], type: WidthType.DXA },
+        shading: { type: ShadingType.CLEAR, fill: "1D1A16" },
+        children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: t, bold: true, color: "FFFFFF", size: 20 })] })],
+      })),
+    });
+    const rows = [headerRow];
+    lineItemGroups.forEach((g) => {
+      rows.push(new TableRow({
+        children: [new TableCell({
+          columnSpan: 4,
+          width: { size: 9500, type: WidthType.DXA },
+          shading: { type: ShadingType.CLEAR, fill: "F0E6C8" },
+          children: [new Paragraph({ children: [new TextRun({ text: g.group, bold: true, size: 20 })] })],
+        })],
+      }));
+      g.items.forEach((it) => {
+        rows.push(new TableRow({
+          children: [
+            new TableCell({ width: { size: 4500, type: WidthType.DXA }, children: [new Paragraph({ children: [new TextRun({ text: it.name, size: 20 })] })] }),
+            new TableCell({ width: { size: 1200, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: String(it.quantity || 1), size: 20 })] })] }),
+            new TableCell({ width: { size: 1900, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: fmtVNDLong(it.unitPrice), size: 20 })] })] }),
+            new TableCell({ width: { size: 1900, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: fmtVNDLong(it.contractValue), size: 20 })] })] }),
+          ],
+        }));
+      });
+    });
+    rows.push(new TableRow({
+      children: [
+        new TableCell({ columnSpan: 3, width: { size: 7600, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "TỔNG CỘNG (chưa VAT)", bold: true, size: 20 })] })] }),
+        new TableCell({ width: { size: 1900, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: fmtVNDLong(subtotal), bold: true, size: 20 })] })] }),
+      ],
+    }));
+    return new Table({ width: { size: 9500, type: WidthType.DXA }, rows });
+  };
+
+  const headerEl = new Header({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "GADA.Studios", bold: true, color: "6E85B2", size: 26 })] })] });
+  const footerEl = new Footer({
+    children: [new Paragraph({
+      alignment: AlignmentType.CENTER,
+      tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
+      children: [
+        new TextRun({ text: "GADA.Studios", bold: true, color: "6E85B2", size: 22 }),
+        new TextRun({ text: "\t" }),
+        new TextRun({ text: "Page ", size: 18 }),
+        new TextRun({ children: [PageNumber.CURRENT], size: 18 }),
+        new TextRun({ text: " of ", size: 18 }),
+        new TextRun({ children: [PageNumber.TOTAL_PAGES], size: 18 }),
+      ],
+    })],
+  });
+
+  const sections = [];
+  sections.push(
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 40 }, children: [new TextRun({ text: "CỘNG HOÀ XÃ HỘI CHỦ NGHĨA VIỆT NAM", bold: true, size: 26 })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 200 }, children: [new TextRun({ text: "Độc lập - Tự do - Hạnh phúc", size: 22 })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 400 }, children: [new TextRun({ text: "____________", size: 22 })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 40 }, children: [new TextRun({ text: "HỢP ĐỒNG DỊCH VỤ", bold: true, size: 30 })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 40 }, children: [new TextRun({ text: `Số: ${contractNumber}`, size: 22 })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 200 }, children: [new TextRun({ text: "Bởi và giữa", bold: true, size: 22 })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 40 }, children: [new TextRun({ text: CONTRACT_COMPANY_A.name, bold: true, size: 24 })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 20 }, children: [new TextRun({ text: `Địa chỉ: ${CONTRACT_COMPANY_A.address}`, size: 20 })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 400 }, children: [new TextRun({ text: `Email: ${CONTRACT_COMPANY_A.email}     Số điện thoại: ${CONTRACT_COMPANY_A.phone}`, size: 20 })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 400 }, children: [new TextRun({ text: "Và", bold: true, size: 22 })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 400 }, children: [new TextRun({ text: clientB.name || "…", bold: true, size: 24 })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 40 }, children: [new TextRun({ text: `Tp. Hồ Chí Minh, ${fmtDateVNLong(signedDate)}`, size: 22 })] }),
+    p(`Hợp đồng dịch vụ này ("Hợp Đồng") được lập ${fmtDateVNLong(signedDate)}, bởi và giữa:`),
+    heading("1.  CÔNG TY TNHH GADA.STUDIOS (Bên A)"),
+    fieldLine("Đại diện bởi", "Ông. " + CONTRACT_COMPANY_A.representativeName),
+    fieldLine("Chức vụ", CONTRACT_COMPANY_A.representativeTitle),
+    fieldLine("Địa chỉ", CONTRACT_COMPANY_A.address),
+    fieldLine("Mã số thuế", CONTRACT_COMPANY_A.taxCode),
+    fieldLine("Ngân hàng", CONTRACT_COMPANY_A.bankName),
+    fieldLine("Số tài khoản", CONTRACT_COMPANY_A.bankAccount),
+    fieldLine("Email", CONTRACT_COMPANY_A.email),
+    heading(`2.  ${clientB.name || "…"} (Bên B)`),
+    fieldLine("Đại diện bởi", clientB.representativeName),
+    fieldLine("Chức vụ", clientB.representativeTitle),
+    fieldLine("Địa chỉ", clientB.address),
+    fieldLine("Email", clientB.email),
+    fieldLine("Mã số thuế", clientB.taxCode),
+    fieldLine("Ngân hàng", clientB.bankName),
+    fieldLine("Số tài khoản", clientB.bankAccount),
+    fieldLine("Điện thoại", clientB.phone),
+    p('Bên A và Bên B sau đây gọi chung là "Các Bên" và gọi riêng là "Bên" được hiểu tùy thuộc vào ngữ cảnh.'),
+    p('Sau khi đã cùng nhau thảo luận kỹ càng, hai bên thống nhất ký kết Hợp đồng cung cấp dịch vụ (Sau đây gọi là "Hợp đồng") với các điều kiện và điều khoản sau:'),
+    heading("Điều 1. NỘI DUNG HỢP ĐỒNG"),
+    p(`1.1 Bên A đồng ý cung cấp dịch vụ ${project.serviceDescription || "sản xuất …"} cho Bên B theo yêu cầu và định hướng của Bên B.`),
+    p("1.2 Bên A đồng ý thực hiện dịch vụ với những yêu cầu và nội dung cụ thể sau:"),
+    p(`1.3 Chi tiết: Dịch vụ ${project.serviceDescription || "sản xuất …"} cho dự án "${project.name}". Lịch trình sản xuất: đảm bảo cung cấp sản phẩm đã chỉnh sửa cho Bên B theo thời gian và định hướng đã được thống nhất giữa 02 bên trước ngày bên A bắt đầu thực hiện công việc.`),
+    p(`1.4 Thời gian thực hiện: ${days} ngày, ${fmtDateVNLong(project.startDate)}.`),
+    p(`1.5 Thời gian hoàn thành, bàn giao: ${fmtDateVNLong(project.endDate)}.`),
+    p("1.6 Bàn giao dự án: Thành phẩm giao hàng là sản phẩm hoàn chỉnh cuối cùng đáp ứng theo yêu cầu đã được sự đồng ý của cả bên A và bên B."),
+    p("1.7 Các sản phẩm hoàn thành được chuyển giao sẽ phải đáp ứng các nội dung đã được quy định trong hợp đồng này hoặc xác nhận qua email bởi đại diện có thẩm quyền của cả hai bên. Theo đó, tất cả trao đổi mang tính quyết định thi hành nếu được gửi thông qua phương thức thư điện tử thì các bên xác nhận thông tin thư điện tử sau sẽ là thư điện tử chính để thực hiện giao dịch."),
+  );
+
+  sections.push(new Table({
+    width: { size: 9500, type: WidthType.DXA },
+    rows: [
+      new TableRow({ children: [
+        new TableCell({ width: { size: 4750, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Bên A", bold: true, size: 22 })] })] }),
+        new TableCell({ width: { size: 4750, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Bên B", bold: true, size: 22 })] })] }),
+      ]}),
+      new TableRow({ children: [
+        new TableCell({ width: { size: 4750, type: WidthType.DXA }, children: [
+          new Paragraph({ children: [new TextRun({ text: `Họ tên: ${CONTRACT_COMPANY_A.representativeName}`, size: 20 })] }),
+          new Paragraph({ children: [new TextRun({ text: `Điện thoại: ${CONTRACT_COMPANY_A.phone}`, size: 20 })] }),
+          new Paragraph({ children: [new TextRun({ text: `Thư điện tử: ${CONTRACT_COMPANY_A.email}`, size: 20 })] }),
+        ]}),
+        new TableCell({ width: { size: 4750, type: WidthType.DXA }, children: [
+          new Paragraph({ children: [new TextRun({ text: `Họ tên: ${clientB.representativeName || ""}`, size: 20 })] }),
+          new Paragraph({ children: [new TextRun({ text: `Điện thoại: ${clientB.phone || ""}`, size: 20 })] }),
+          new Paragraph({ children: [new TextRun({ text: `Thư điện tử: ${clientB.email || ""}`, size: 20 })] }),
+        ]}),
+      ]}),
+    ],
+  }));
+  sections.push(new Paragraph({ spacing: { after: 200 }, children: [] }));
+
+  sections.push(
+    heading("Điều 2. PHÍ DỊCH VỤ VÀ CHI PHÍ"),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 100, after: 200 }, children: [new TextRun({ text: "BẢNG CHI PHÍ", bold: true, italics: true, color: "C1443C", size: 32 })] }),
+    buildExpenseTable(),
+    p(`(Bằng chữ: ${totalWords}), đã bao gồm 8% thuế GTGT.`, { italics: true }),
+    p("Chi phí được áp dụng theo qui định on set 15 tiếng/ngày. Trường hợp thời gian ghi hình vượt quá 15 tiếng/ngày, chi phí thiết bị và các chi phí nhân sự tính theo NGÀY sẽ phát sinh:"),
+    p("Từ tiếng thứ 15 - tiếng thứ 17, phát sinh 50% chi phí nhân sự và thiết bị on set."),
+    p("Từ tiếng thứ 17 - tiếng thứ 20, phát sinh 100% chi phí nhân sự và thiết bị on set."),
+    p("2.2 Các Bên xác nhận và đồng ý rằng Phí Dịch Vụ là toàn bộ, và nếu có thay đổi phát sinh thêm chi phí, thì khoản phát sinh sẽ được ghi nhận trên biên bản nghiệm thu thanh lý hoặc được ghi nhận trên phụ lục hợp đồng này và được sự đồng ý của 02 bên, Bên A và Bên B."),
+    heading("Điều 3. THANH TOÁN"),
+    p("3.1 Thời hạn thanh toán: Thanh toán làm 02 đợt."),
+    pRuns([{ text: "Đợt 1: ", bold: true }, { text: "Bên B tạm ứng " }, { text: "50% giá trị hợp đồng", bold: true }, { text: ` tương đương với số tiền ${fmtVNDLong(payment1Amount)} ngay sau khi ký hợp đồng và trước ngày thực hiện quay.` }]),
+    pRuns([{ text: "Đợt 2: ", bold: true }, { text: "Bên B thanh toán " }, { text: "50% giá trị hợp đồng còn lại", bold: true }, { text: ` tương đương với số tiền ${fmtVNDLong(payment2Amount)} ngay sau khi:` }]),
+    p("- Hợp đồng được hoàn thành,", { indent: 400 }),
+    p("- Hai bên ký kết Biên bản nghiệm thu & thanh lý hợp đồng, và", { indent: 400 }),
+    p("- Bên A đã xuất hóa đơn giá trị gia tăng (GTGT) theo quy định.", { indent: 400 }),
+    p("Thời hạn thanh toán đợt 2 chậm nhất là 07 ngày, kể từ ngày bên A xuất hoá đơn giá trị gia tăng cho bên B."),
+    p("Các chi phí phát sinh khác (nếu có) phát sinh trong quá trình thực hiện Hợp Đồng sẽ được tính và cộng vào theo Biên bản nghiệm thu."),
+    p("3.2 Phương thức thanh toán"),
+    p("Bên B thanh toán cho Bên A bằng phương thức chuyển khoản theo chi tiết sau:"),
+    pRuns([{ text: "Tên tài khoản: " }, { text: CONTRACT_COMPANY_A.name, bold: true }]),
+    pRuns([{ text: "Số tài khoản: " }, { text: CONTRACT_COMPANY_A.bankAccount, bold: true }]),
+    pRuns([{ text: "Tại: " }, { text: CONTRACT_COMPANY_A.bankName, bold: true }]),
+  );
+
+  const article4to12 = [
+    ["Điều 4. QUYỀN VÀ NGHĨA VỤ CỦA CÁC BÊN", null],
+    ["4.1 Quyền và nghĩa vụ của Bên A", "sub"],
+    ["Ngoài các quyền và nghĩa vụ khác được quy định trong Hợp Đồng này, Bên A có các quyền và nghĩa vụ sau đây:", null],
+    ["(a) Yêu cầu Bên B cung cấp các tài liệu, thông tin, phương tiện cần thiết để thực hiện Dịch Vụ theo Hợp Đồng này;", null],
+    ["(b) Yêu cầu Bên B thanh toán Phí Dịch Vụ theo các quy định của Hợp Đồng này;", null],
+    ["(c) Trao đổi ý kiến với Bên B và các đề xuất khác nhằm đảm bảo việc thực hiện Dịch Vụ phù hợp với mục đích của Bên B trong Hợp Đồng này. Trường hợp Bên A đề xuất, phản hồi ý kiến của mình đối với nội dung chương trình, sự kiện, cách thức và những nội dung khác liên quan đến Dịch Vụ, việc đề xuất phản hồi đó phải được thực hiện trong vòng 3 ngày làm việc kể từ ngày nhận được bản thảo/bản thảo sửa đổi, bổ sung từ Bên B. Bên A phải tuân thủ tuyệt đối nội dung bản thảo, kịch bản, tất cả các yêu cầu của Bên B chỉ định bao gồm nhưng không giới hạn đoàn làm phim, đạo diễn, nhiếp ảnh gia và các chuyên gia khác trong quá trình thực hiện Dịch Vụ;", null],
+    ["(d) Cung cấp đầy đủ, chính xác thông tin, tài liệu theo yêu cầu của Bên B trong suốt quá trình thực hiện Dịch Vụ theo Hợp Đồng này, đặc biệt là thông tin liên lạc và chịu trách nhiệm về tính chính xác, hợp pháp của những thông tin, tài liệu đó;", null],
+    ["(e) Tuân thủ tuyệt đối quy định về thời gian, địa điểm, và tất cả các quy định và yêu cầu khác của Bên B, bên được Bên B chỉ định khi thực hiện Dịch Vụ, cụ thể: Trong ngày chương trình diễn ra, phải có mặt trước khoảng 30 phút để chuẩn bị.", null],
+    ["(f) Phối hợp tối đa với Bên B để giải quyết các vấn đề phát sinh trong quá trình thực hiện Dịch Vụ;", null],
+    ["(g) Ký kết Biên Bản Nghiệm Thu Dịch Vụ sau khi Bên A hoàn thành việc cung cấp Dịch Vụ theo Hợp Đồng này;", null],
+    ["(h) Thực hiện và hoàn thành các thủ tục để thực hiện Dịch Vụ theo quy định.", null],
+    ["4.2 Quyền và nghĩa vụ của Bên B:", "sub"],
+    ["Ngoài các quyền và nghĩa vụ khác được quy định trong Hợp Đồng này, Bên B có các quyền và nghĩa vụ sau đây:", null],
+    ["(a) Yêu cầu Bên A thực hiện Dịch Vụ đúng theo các quy định của Hợp Đồng này;", null],
+    ["(b) Yêu cầu Bên A cung cấp các tài liệu, thông tin cần thiết để thực hiện Dịch Vụ theo Hợp Đồng này;", null],
+    ["(c) Có toàn quyền sử dụng hình ảnh của Bên A và tất cả mọi sản phẩm có liên quan đến Bên A khi thực hiện Dịch Vụ theo Hợp Đồng này trong suốt thời hạn của Hợp Đồng và sau đó;", null],
+    ["(d) Có toàn quyền sở hữu bản quyền và các quyền sở hữu trí tuệ liên quan đến các sản phẩm, ấn phẩm do Bên A thực hiện, cung cấp theo Hợp Đồng này trong suốt thời hạn của Hợp Đồng này và sau đó;", null],
+    ["(e) Thanh toán Phí Dịch Vụ theo các quy định của Hợp Đồng này;", null],
+    ["(f) Cung cấp các tài liệu, thông tin và phương tiện cần thiết liên quan đến Dịch Vụ cho Bên Cung Ứng Dịch Vụ;", null],
+    ["(g) Cập nhật các thay đổi Dịch Vụ cho Bên Cung Ứng Dịch Vụ;", null],
+    ["(h) Ký kết Biên Bản Nghiệm Thu Dịch Vụ sau khi Bên Cung Ứng Dịch Vụ hoàn thành việc cung cấp Dịch Vụ theo Hợp Đồng này; và", null],
+    ["(i) Thực hiện các quyền và nghĩa vụ khác, nếu pháp luật Việt Nam có quy định.", null],
+    ["Điều 5. CAM ĐOAN VÀ BẢO ĐẢM CỦA CÁC BÊN", null],
+    ["5.1 Mỗi Bên cam đoan và bảo đảm với Bên kia rằng:", null],
+    ["(a) Các Bên được thành lập hợp pháp theo pháp luật của quốc gia có liên quan, có đầy đủ thẩm quyền, quyền hạn ký kết và thực hiện Hợp Đồng này;", null],
+    ["(b) Việc ký kết và thực hiện Hợp Đồng này sẽ không vi phạm hoặc không trái với pháp luật áp dụng và/hoặc điều lệ, quy chế hoạt động của mỗi Bên;", null],
+    ["(c) Hợp Đồng này được ký kết bởi người được mỗi Bên trao đầy đủ quyền hạn và thẩm quyền; và", null],
+    ["(d) Các Bên sẽ tuân thủ và thực hiện Hợp Đồng này một cách nghiêm chỉnh, tận tâm và thiện chí.", null],
+    ["5.2 Bên A cam đoan và bảo đảm với Bên B rằng:", null],
+    ["(a) Bên A cam đoan và bảo đảm rằng việc Bên A ký kết Hợp Đồng này sẽ không vi phạm bất kỳ một thoả thuận nào khác mà Bên A đã giao kết cũng như sản phẩm do Bên A cung cấp sẽ không quy phạm các quy định của pháp luật về quyền sở hữu trí tuệ; và rằng A sẽ chịu trách nhiệm giải quyết bất kỳ và toàn bộ khiếu nại, tranh chấp nào phát sinh từ (các) bên thứ ba để đảm bảo B không bị tổn hại bởi những khiếu nại, tranh chấp đó;", null],
+    ["(b) Bên A cam đoan và bảo đảm rằng B có toàn quyền sử dụng hình ảnh của Bên Cung Ứng Dịch Vụ và tất cả mọi sản phẩm có liên quan đến Bên Cung Ứng Dịch Vụ khi thực hiện Dịch Vụ theo Hợp Đồng này trong suốt thời hạn của Hợp Đồng và sau đó và Bên Cung Ứng Dịch Vụ sẽ không có bất kỳ khiếu nại hoặc không có bất kỳ yêu cầu nào đối với Bên B;", null],
+    ["(c) Bên A sẽ không thuê hoặc giao (các) bên thứ ba để thực hiện một phần hoặc toàn bộ công việc thuộc Dịch Vụ, trừ khi được Bên B đồng ý trước bằng văn bản;", null],
+    ["(d) Bên A sẽ không thực hiện bất kỳ hành động nào cho dù bằng lời nói hay bằng văn bản trên bất kỳ phương tiện nào, đặc biệt là bài viết, nhận xét trên facebook, blog,.. có thể gây hiểu nhầm hoặc làm ảnh hưởng đến chương trình liên quan tới Dịch Vụ hoặc làm ảnh hưởng đến uy tín, hình ảnh, thương hiệu của Bên B và sản phẩm liên quan đến Dịch Vụ trong suốt thời hạn của Hợp Đồng và sau đó;", null],
+    ["(e) Bên B không phải chịu trách nhiệm nếu Dịch Vụ bị kéo dài, trì hoãn, thay đổi, và/hoặc không thể hoàn thành trong thời hạn đã dự trù mà không phải do lỗi của Bên B.", null],
+    ["Điều 6. BẢO MẬT", null],
+    ["6.1 Các Bên không được tiết lộ cho bất kỳ bên thứ ba nào về bất kỳ thông tin và/hoặc tài liệu được cung cấp bởi và/hoặc có liên quan đến Bên còn lại và/hoặc liên quan đến Hợp Đồng này mà các Bên có được trong quá trình ký kết, thực hiện Hợp đồng này trong suốt thời hạn có hiệu lực của Hợp Đồng này và cả sau khi Hợp đồng này hết hiệu lực, trừ trường hợp có sự đồng ý bằng văn bản của Bên có thông tin bị tiết lộ hoặc việc tiết lộ, cung cấp thông tin là bắt buộc theo quy định của pháp luật.", null],
+    ["6.2 Các Bên không được tham chiếu đến các điều khoản trong Hợp Đồng này hoặc các dịch vụ cụ thể được cung cấp theo Hợp Đồng này cho bất kỳ chương trình quảng cáo, quảng bá, khuyến mãi nào khác hoặc cho bất kỳ bên thứ ba nào khác.", null],
+    ["6.3 Điều 6 này vẫn giữ nguyên hiệu lực vô thời hạn sau khi Hợp Đồng chấm dứt.", null],
+    ["Điều 7. PHẠT VI PHẠM VÀ BỒI THƯỜNG THIỆT HẠI", null],
+    ["Trong quá trình thực hiện Hợp Đồng, nếu một Bên vi phạm bất kỳ nghĩa vụ nào của mình theo Hợp Đồng này, Bên vi phạm phải trả cho Bên bị vi phạm một khoản tiền phạt vi phạm bằng 20% phần giá trị Hợp Đồng bị vi phạm. Ngoài ra, Bên vi phạm còn phải bồi thường thiệt hại cho Bên bị vi phạm theo quy định của pháp luật và các thoả thuận khác tại Hợp Đồng này (nếu có).", null],
+    ["Điều 8. BẤT KHẢ KHÁNG", null],
+    ["8.1 Sự Kiện Bất Khả Kháng được định nghĩa là bất kỳ sự kiện hoặc điều kiện nào xảy ra một cách khách quan không thể lường trước được làm chậm trễ hoặc ngăn cản việc thực hiện toàn bộ hoặc một phần Hợp Đồng đối của một Bên đối với Bên còn lại bao gồm nhưng không giới hạn ở thiên tai, hành động của kẻ thù chung, các cuộc nổi dậy, các cuộc bạo loạn, sự rối loạn dân sự, chiến tranh và tình trạng thù địch, khủng bố, cấm vận thương mại hoặc sự can thiệp của chính phủ.", null],
+    ["8.2 Nếu Sự Kiện Bất Khả Kháng khiến một Bên không thể thực hiện được một phần hoặc toàn bộ nghĩa vụ của mình theo Hợp Đồng này, Bên đó không phải chịu trách nhiệm do Sự Kiện Bất Khả Kháng nếu (a) đã thông báo bằng văn bản cho Bên còn lại biết trong thời hạn ba (03) ngày kể từ xảy ra Sự Kiện Bất Khả Kháng; và (b) phải sử dụng mọi nỗ lực trong khả năng của mình nhằm hạn chế ảnh hưởng của Sự Kiện Bất Khả Kháng đối với việc thực hiện nghĩa vụ của mình theo Hợp Đồng.", null],
+    ["8.3 Sau khi Sự Kiện Bất Khả Kháng chấm dứt, Bên gặp Sự Kiện Bất Khả Kháng phải tiếp tục thực hiện nghĩa vụ của mình theo Hợp Đồng bị tạm ngừng do Sự Kiện Bất Khả Kháng nếu nghĩa vụ đó vẫn có thể thực hiện được.", null],
+    ["Điều 9. THỜI HẠN VÀ CHẤM DỨT HỢP ĐỒNG", null],
+    ["9.1 Hợp Đồng này có hiệu lực kể từ ngày ký cho đến ngày Bên Cung Ứng Dịch Vụ hoàn thành nghĩa vụ theo Hợp Đồng này trừ khi bị chấm dứt trước hạn theo thỏa thuận bằng văn bản của Các Bên hoặc theo các Điều 9.2 và 9.3 dưới đây.", null],
+    ["9.2 Mỗi Bên có quyền đơn phương chấm dứt Hợp Đồng này bằng cách gửi văn bản thông báo cho Bên còn lại trước bảy (07) ngày khi một trong các sự kiện sau xảy ra:", null],
+    ["(a) Một Bên bị tuyên bố phá sản hoặc tự nộp đơn hoặc bị nộp đơn yêu cầu phá sản;", null],
+    ["(b) Một Bên ngừng hoạt động theo quyết định của mình hoặc theo quyết định của cơ quan nhà nước có thẩm quyền;", null],
+    ["(c) Một Bên bị cơ quan nhà nước có thẩm quyền thu hồi các loại giấy phép, giấy chứng nhận, chấp thuận, phê duyệt mà nếu thiếu các loại giấy tờ này Bên đó không thể thực hiện nghĩa vụ của mình theo Hợp Đồng;", null],
+    ["(d) Một Bên bị tuyên bố mất năng lực hành vi dân sự (nếu là cá nhân); bị giải thể (nếu là tổ chức);", null],
+    ["(e) Việc sáp nhập, chia tách, hợp nhất hoặc thay đổi cơ cấu kiểm soát của một Bên gây ảnh hưởng nghiêm trọng đến việc thực hiện Hợp Đồng này;", null],
+    ["9.3 Để tránh nhầm lẫn, những nghĩa vụ liên quan đến bảo mật, trách nhiệm pháp lý phát sinh từ việc chấm dứt Hợp Đồng, cam đoan và bảo đảm, quyền sở hữu trí tuệ, chuyển giao nghĩa vụ và các quy định cụ thể khác vẫn tiếp tục có hiệu lực sau khi Hợp Đồng chấm dứt.", null],
+    ["Điều 10. THÔNG BÁO", null],
+    ['10.1 Mọi thông tin trao đổi liên quan đến Hợp Đồng này phải được lập thành văn bản ("Thông Báo") và được gửi đến Các Bên bằng thư bảo đảm hoặc bằng fax theo địa chỉ của Các Bên đã nêu tại phần đầu của Hợp Đồng này hoặc địa chỉ khác do Các Bên thông báo theo từng thời điểm.', null],
+    ["10.2 Thông Báo được xem như đã nhận được vào các thời điểm sau:", null],
+    ["(a) Vào thời điểm ký nhận nếu chuyển thư tay;", null],
+    ["(b) Vào 10.00 giờ sáng của ngày làm việc kế tiếp nếu gửi bằng dịch vụ phát chuyển nhanh của bưu điện;", null],
+    ["(c) Sau hai tiếng nếu gửi bằng fax trước 3.00 giờ chiều của ngày làm việc; Vào 10.00 giờ sáng của ngày làm việc kế tiếp nếu gửi bằng fax sau 3.00 giờ chiều và máy fax báo đã truyền gửi đúng và hợp lệ.", null],
+    ["Điều 11. LUẬT ÁP DỤNG VÀ GIẢI QUYẾT TRANH CHẤP", null],
+    ["11.1 Bên A và Bên B tại đây đồng ý rằng Hợp Đồng này được áp dụng và điều chỉnh bởi Bộ luật Dân sự Việt Nam.", null],
+    ['11.2 Mọi tranh chấp phát sinh từ hoặc có liên quan đến Hợp đồng này (gọi chung "Tranh Chấp") sẽ được Các Bên giải quyết thông qua thương lượng trên tinh thần tôn trọng và cùng có lợi. Trong trường hợp Các Bên không thỏa thuận được với nhau về việc giải quyết Tranh Chấp trong vòng ba mươi (30) ngày kể từ ngày một Bên gửi thông báo Tranh Chấp cho Bên kia, bất kỳ Bên nào có quyền yêu cầu toà án có thẩm quyền giải quyết và quyết định của toà án là chung thẩm.', null],
+    ["Điều 12. ĐIỀU KHOẢN CHUNG", null],
+    ["12.1 Không Bên nào được quyền chuyển nhượng bất kỳ hoặc toàn bộ quyền, nghĩa vụ của mình theo Hợp Đồng này cho (các) bên thứ ba nếu không được Bên kia chấp thuận trước bằng văn bản.", null],
+    ["12.2 Bất kỳ sự sửa đổi, bổ sung nào đối với Hợp Đồng này chỉ có hiệu lực đối với các vấn đề được sửa đổi và/hoặc bổ sung. Tất cả các điều khoản và điều kiện khác của Hợp Đồng vẫn giữ nguyên hiệu lực.", null],
+    ["12.3 Trong trường hợp một hoặc một số điều khoản của Hợp Đồng được cho là vô hiệu hoặc không thể thi hành theo pháp luật thì tính hợp pháp, giá trị và hiệu lực thi hành của các điều khoản khác trong Hợp Đồng này sẽ không bị ảnh hưởng.", null],
+    ["12.4 Hợp Đồng này được lập thành hai (02) bản chính có giá trị pháp lý như nhau, mỗi Bên giữ một (01) bản.", null],
+    ["12.5 Trong khả năng nhận thức tối đa của mình, Các Bên đồng ý rằng đã đọc, hiểu và chấp thuận tất cả các điều khoản và điều kiện của Hợp Đồng này.", null],
+  ];
+  article4to12.forEach(([text, kind]) => {
+    if (kind === null && /^Điều \d+\./.test(text)) sections.push(heading(text));
+    else if (kind === "sub") sections.push(p(text, { bold: true }));
+    else sections.push(p(text));
+  });
+
+  sections.push(new Paragraph({
+    alignment: AlignmentType.CENTER, spacing: { before: 300, after: 300 },
+    children: [new TextRun({ text: `ĐỂ LÀM BẰNG CHỨNG, Hợp Đồng này đã được lập và ký bởi người đại diện có thẩm quyền của Các Bên vào ngày ghi trên, ${fmtDateVNLong(signedDate)}.`, bold: true, size: 24 })],
+  }));
+
+  sections.push(new Table({
+    width: { size: 9500, type: WidthType.DXA },
+    rows: [
+      new TableRow({ children: [
+        new TableCell({ width: { size: 4750, type: WidthType.DXA }, children: [
+          new Paragraph({ children: [new TextRun({ text: "BÊN A", bold: true, size: 22 })] }),
+          new Paragraph({ children: [new TextRun({ text: "CÔNG TY TNHH", bold: true, size: 22 })] }),
+          new Paragraph({ children: [new TextRun({ text: "GADA.STUDIOS", bold: true, size: 22 })] }),
+          new Paragraph({ spacing: { before: 600 }, children: [new TextRun({ text: CONTRACT_COMPANY_A.representativeName, bold: true, size: 22 })] }),
+          new Paragraph({ children: [new TextRun({ text: "Giám Đốc", size: 20 })] }),
+        ]}),
+        new TableCell({ width: { size: 4750, type: WidthType.DXA }, children: [
+          new Paragraph({ children: [new TextRun({ text: "BÊN B", bold: true, size: 22 })] }),
+          new Paragraph({ children: [new TextRun({ text: clientB.name || "", bold: true, size: 22 })] }),
+          new Paragraph({ spacing: { before: 600 }, children: [new TextRun({ text: clientB.representativeName || "", bold: true, size: 22 })] }),
+          new Paragraph({ children: [new TextRun({ text: clientB.representativeTitle || "", size: 20 })] }),
+        ]}),
+      ]}),
+    ],
+  }));
+
+  return new Document({
+    sections: [{
+      properties: { page: { margin: { top: 1200, bottom: 1200, left: 1200, right: 1200 } } },
+      headers: { default: headerEl },
+      footers: { default: footerEl },
+      children: sections,
+    }],
+    styles: { default: { document: { run: { font: "Times New Roman" } } } },
+  });
+}
+
 const PROJECT_STATUSES = ["Chưa bắt đầu", "Tiền kỳ", "Đang quay", "Hậu kỳ", "Hoàn thành", "Tạm dừng"];
 const CONTRACT_STATUSES = ["Chờ ký", "Đã ký", "Hết hạn"];
 const MILESTONE_STATUSES = ["Chưa bắt đầu", "Đang thực hiện", "Hoàn thành", "Trễ hạn"];
@@ -890,11 +1296,15 @@ function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineC
 
 /* ------------------------------- form: contract ------------------------------ */
 
-function ContractForm({ initial, onSave, onClose }) {
-  const [f, setF] = useState(initial || { contractNumber: "", value: "", receivedAmount: "", signedDate: "", status: "Chờ ký", paymentTerms: "", notes: "" });
+function ContractForm({ initial, onSave, onClose, clientName }) {
+  const [f, setF] = useState(initial || {
+    contractNumber: "", value: "", receivedAmount: "", signedDate: "", status: "Chờ ký", paymentTerms: "", notes: "",
+    serviceDescription: "", representativeName: "", representativeTitle: "", clientAddress: "", clientEmail: "",
+    taxCode: "", clientPhone: "", bankAccount: "", bankName: "",
+  });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   return (
-    <Modal title={initial ? "Sửa hợp đồng" : "Hợp đồng mới"} onClose={onClose}>
+    <Modal title={initial ? "Sửa hợp đồng" : "Hợp đồng mới"} onClose={onClose} size="xl">
       <div className="mv-form-grid">
         <Field label="Số hợp đồng"><input className="mv-input" value={f.contractNumber} onChange={set("contractNumber")} /></Field>
         <Field label="Giá trị hợp đồng — khách phải trả (VND)"><input type="number" className="mv-input" value={f.value} onChange={set("value")} /></Field>
@@ -908,6 +1318,24 @@ function ContractForm({ initial, onSave, onClose }) {
       </div>
       <Field label="Điều khoản thanh toán"><input className="mv-input" value={f.paymentTerms} onChange={set("paymentTerms")} /></Field>
       <Field label="Ghi chú"><textarea className="mv-input" rows={2} value={f.notes} onChange={set("notes")} /></Field>
+
+      <div className="mv-drive-divider" />
+      <h4 className="mv-inline-timeline-title"><FileText size={15} /> Thông tin để xuất file hợp đồng Word</h4>
+      <Field label={`Nội dung dịch vụ (VD: MV ca nhạc, TVC quảng cáo...)`}>
+        <input className="mv-input" value={f.serviceDescription} onChange={set("serviceDescription")} placeholder="MV ca nhạc" />
+      </Field>
+      <div className="mv-row-sub" style={{ marginBottom: 8 }}>Thông tin Bên B ({clientName || "khách hàng"}) — dùng để điền vào hợp đồng</div>
+      <div className="mv-form-grid">
+        <Field label="Đại diện bởi"><input className="mv-input" value={f.representativeName} onChange={set("representativeName")} placeholder="Ông/Bà ..." /></Field>
+        <Field label="Chức vụ"><input className="mv-input" value={f.representativeTitle} onChange={set("representativeTitle")} /></Field>
+        <Field label="Địa chỉ"><input className="mv-input" value={f.clientAddress} onChange={set("clientAddress")} /></Field>
+        <Field label="Email"><input className="mv-input" value={f.clientEmail} onChange={set("clientEmail")} /></Field>
+        <Field label="Mã số thuế"><input className="mv-input" value={f.taxCode} onChange={set("taxCode")} /></Field>
+        <Field label="Số điện thoại"><input className="mv-input" value={f.clientPhone} onChange={set("clientPhone")} /></Field>
+        <Field label="Số tài khoản"><input className="mv-input" value={f.bankAccount} onChange={set("bankAccount")} /></Field>
+        <Field label="Ngân hàng"><input className="mv-input" value={f.bankName} onChange={set("bankName")} /></Field>
+      </div>
+
       <div className="mv-modal-actions">
         <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
         <button className="mv-btn mv-btn-primary" onClick={() => f.contractNumber.trim() && onSave({ ...f, value: Number(f.value) || 0, receivedAmount: Number(f.receivedAmount) || 0 })}>Lưu hợp đồng</button>
@@ -1748,6 +2176,54 @@ function ProjectDetail({ data, persist, projectId, back }) {
   };
   const deleteContract = (id) => { persist({ ...data, contracts: data.contracts.filter((c) => c.id !== id) }); setConfirmRemove(null); };
 
+  const [exportingContractId, setExportingContractId] = useState(null);
+  const [exportError, setExportError] = useState("");
+  const handleExportContractWord = async (c) => {
+    setExportError("");
+    if (lineItems.length === 0) {
+      setExportError("Chưa có hạng mục nào trong bảng dự toán — thêm ít nhất 1 hạng mục ở tab Dòng tiền trước khi xuất hợp đồng.");
+      return;
+    }
+    setExportingContractId(c.id);
+    try {
+      await loadDocxScript();
+      const grouped = CATALOG_GROUPS.map((g) => ({ group: g, items: lineItems.filter((l) => (l.group || "Miscellaneous") === g) }))
+        .concat([{ group: "Khác", items: lineItems.filter((l) => !CATALOG_GROUPS.includes(l.group)) }])
+        .filter((g) => g.items.length > 0);
+      const subtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
+      const totalExtra = lineItems.reduce((s, l) => s + (l.extraAmount || 0), 0);
+      const billableTotal = subtotal + totalExtra;
+      const totalWithVat = billableTotal * 1.08;
+      const doc = buildContractDocument({
+        contractNumber: c.contractNumber,
+        signedDate: c.signedDate || todayISO(),
+        clientB: {
+          name: project.client,
+          representativeName: c.representativeName,
+          representativeTitle: c.representativeTitle,
+          address: c.clientAddress,
+          email: c.clientEmail,
+          taxCode: c.taxCode,
+          phone: c.clientPhone,
+          bankAccount: c.bankAccount,
+          bankName: c.bankName,
+        },
+        project: { name: project.name, serviceDescription: c.serviceDescription, startDate: project.startDate, endDate: project.endDate },
+        lineItemGroups: grouped,
+        subtotal,
+        totalWithVat,
+        payment1Amount: totalWithVat / 2,
+        payment2Amount: totalWithVat / 2,
+      });
+      const blob = await window.docx.Packer.toBlob(doc);
+      downloadBlob(blob, `Hop-dong-${(c.contractNumber || "GADA").replace(/[^a-zA-Z0-9]/g, "-")}.docx`);
+    } catch (e) {
+      setExportError(e.message || "Không tạo được file hợp đồng.");
+    } finally {
+      setExportingContractId(null);
+    }
+  };
+
   const saveLineItem = (l) => {
     const next = { ...data };
     next.lineItems = l.id
@@ -1911,6 +2387,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
             <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingContract(null); setShowContractForm(true); }}><Plus size={14} /> Thêm hợp đồng</button>
           </div>
           {contracts.length === 0 && <p className="mv-empty-note">Chưa có hợp đồng nào cho dự án này.</p>}
+          {exportError && <p className="mv-drive-script-error">{exportError}</p>}
           {contracts.map((c) => {
             const clientDebt = c.value - (c.receivedAmount || 0);
             return confirmRemove === c.id ? (
@@ -1931,6 +2408,9 @@ function ProjectDetail({ data, persist, projectId, back }) {
                     </span>
                   </div>
                   <div>
+                    <button className="mv-btn mv-btn-ghost mv-btn-sm" disabled={exportingContractId === c.id} onClick={() => handleExportContractWord(c)}>
+                      <FileText size={13} /> {exportingContractId === c.id ? "Đang tạo..." : "Tải hợp đồng Word"}
+                    </button>
                     <button className="mv-icon-btn" onClick={() => { setEditingContract(c); setShowContractForm(true); }}><Pencil size={14} /></button>
                     <button className="mv-icon-btn" onClick={() => setConfirmRemove(c.id)}><Trash2 size={14} /></button>
                   </div>
@@ -1938,7 +2418,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
               </div>
             );
           })}
-          {showContractForm && <ContractForm initial={editingContract} onClose={() => { setShowContractForm(false); setEditingContract(null); }} onSave={saveContract} />}
+          {showContractForm && <ContractForm initial={editingContract} onClose={() => { setShowContractForm(false); setEditingContract(null); }} onSave={saveContract} clientName={project.client} />}
         </div>
 
         <div className="mv-panel">
