@@ -130,6 +130,34 @@ const downloadBlob = (blob, filename) => {
   URL.revokeObjectURL(url);
 };
 
+function compressImageFile(file, maxDim, quality) {
+  maxDim = maxDim || 1400;
+  quality = quality || 0.75;
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) { height = Math.round((height * maxDim) / width); width = maxDim; }
+          else { width = Math.round((width * maxDim) / height); height = maxDim; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = () => reject(new Error("Không đọc được ảnh"));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error("Không đọc được file"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function loadDocxScript() {
   return new Promise((resolve, reject) => {
     if (window.docx && window.docx.Document) { resolve(); return; }
@@ -943,6 +971,7 @@ function normalizeData(d) {
     lineItems: migratedLineItems,
     catalog: ensureCatalogDefaults(n.catalog || []),
     timelineCatalog: n.timelineCatalog || buildDefaultTimelineCatalog(),
+    payments: n.payments || [],
     _meta: n._meta || { updatedAt: new Date().toISOString() },
   };
 }
@@ -1296,6 +1325,72 @@ function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineC
 
 /* ------------------------------- form: contract ------------------------------ */
 
+/* ------------------------------- form: client payment ------------------------------ */
+
+const PAYMENT_METHODS = ["Chuyển khoản", "Tiền mặt", "Khác"];
+
+function PaymentForm({ initial, onSave, onClose }) {
+  const [f, setF] = useState(initial || { amount: "", date: todayISO(), method: "Chuyển khoản", notes: "", imageDataUrl: "" });
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const handleFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setUploadError("");
+    setUploading(true);
+    try {
+      const dataUrl = await compressImageFile(file);
+      setF((prev) => ({ ...prev, imageDataUrl: dataUrl }));
+    } catch (err) {
+      setUploadError("Không tải được ảnh này, thử ảnh khác nhé.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <Modal title={initial && initial.id ? "Sửa thanh toán" : "Thêm thanh toán"} onClose={onClose}>
+      <div className="mv-form-grid">
+        <Field label="Số tiền đã thanh toán (VND)"><input type="number" className="mv-input" value={f.amount} onChange={set("amount")} /></Field>
+        <Field label="Ngày thanh toán"><input type="date" className="mv-input" value={f.date} onChange={set("date")} /></Field>
+        <Field label="Hình thức">
+          <select className="mv-input" value={f.method} onChange={set("method")}>
+            {PAYMENT_METHODS.map((m) => <option key={m}>{m}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field label="Ghi chú"><input className="mv-input" value={f.notes} onChange={set("notes")} placeholder="VD: Đợt 1 - tạm ứng" /></Field>
+      <Field label="Ảnh chứng từ (tuỳ chọn)">
+        <input type="file" accept="image/*" onChange={handleFile} />
+        {uploading && <div className="mv-row-sub">Đang xử lý ảnh...</div>}
+        {uploadError && <div className="mv-drive-script-error">{uploadError}</div>}
+        {f.imageDataUrl && (
+          <div className="mv-payment-preview-wrap">
+            <img src={f.imageDataUrl} alt="Chứng từ" className="mv-payment-preview" />
+            <button className="mv-icon-btn" onClick={() => setF({ ...f, imageDataUrl: "" })}><X size={14} /></button>
+          </div>
+        )}
+      </Field>
+      <div className="mv-modal-actions">
+        <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
+        <button className="mv-btn mv-btn-primary" disabled={uploading} onClick={() => f.amount && onSave({ ...f, amount: Number(f.amount) || 0 })}>Lưu thanh toán</button>
+      </div>
+    </Modal>
+  );
+}
+
+function ImageLightbox({ src, onClose }) {
+  return (
+    <div className="mv-lightbox-overlay" onClick={onClose}>
+      <img src={src} alt="Chứng từ thanh toán" className="mv-lightbox-img" onClick={(e) => e.stopPropagation()} />
+      <button className="mv-lightbox-close" onClick={onClose}><X size={20} /></button>
+    </div>
+  );
+}
+
 function ContractForm({ initial, onSave, onClose, clientName }) {
   const [f, setF] = useState(initial || {
     contractNumber: "", value: "", receivedAmount: "", signedDate: "", status: "Chờ ký", paymentTerms: "", notes: "",
@@ -1308,7 +1403,6 @@ function ContractForm({ initial, onSave, onClose, clientName }) {
       <div className="mv-form-grid">
         <Field label="Số hợp đồng"><input className="mv-input" value={f.contractNumber} onChange={set("contractNumber")} /></Field>
         <Field label="Giá trị hợp đồng — khách phải trả (VND)"><input type="number" className="mv-input" value={f.value} onChange={set("value")} /></Field>
-        <Field label="Khách đã thanh toán (VND)"><input type="number" className="mv-input" value={f.receivedAmount} onChange={set("receivedAmount")} /></Field>
         <Field label="Ngày ký"><input type="date" className="mv-input" value={f.signedDate} onChange={set("signedDate")} /></Field>
         <Field label="Trạng thái">
           <select className="mv-input" value={f.status} onChange={set("status")}>
@@ -1836,6 +1930,7 @@ function ProjectsList({ data, persist, openProject }) {
       assignments: data.assignments.filter((a) => a.projectId !== id),
       transactions: data.transactions.filter((t) => t.projectId !== id),
       lineItems: data.lineItems.filter((l) => l.projectId !== id),
+      payments: data.payments.filter((pm) => pm.projectId !== id),
     };
     persist(next);
     setConfirmDelete(null);
@@ -2150,6 +2245,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const lineItems = data.lineItems.filter((l) => l.projectId === projectId);
   const milestones = data.milestones.filter((m) => m.projectId === projectId).sort((a, b) => new Date(a.date) - new Date(b.date));
   const crewLineItems = lineItems.filter((l) => l.group === "Nhân sự" && l.personnelId);
+  const payments = data.payments.filter((pm) => pm.projectId === projectId).sort((a, b) => new Date(b.date) - new Date(a.date));
   const transactions = data.transactions.filter((t) => t.projectId === projectId).sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const thu = transactions.filter((t) => t.type === "Thu").reduce((s, t) => s + t.amount, 0);
@@ -2159,7 +2255,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const lineItemsSubtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
   const lineItemsExtraTotal = lineItems.reduce((s, l) => s + (l.extraAmount || 0), 0);
   const clientTotal = lineItemsSubtotal + lineItemsExtraTotal;
-  const clientReceived = contracts.reduce((s, c) => s + (c.receivedAmount || 0), 0);
+  const clientReceived = payments.reduce((s, pm) => s + (pm.amount || 0), 0);
   const clientDebtTotal = clientTotal - clientReceived;
   const profit = clientTotal - lineItemsActual;
 
@@ -2175,6 +2271,20 @@ function ProjectDetail({ data, persist, projectId, back }) {
     setEditingContract(null);
   };
   const deleteContract = (id) => { persist({ ...data, contracts: data.contracts.filter((c) => c.id !== id) }); setConfirmRemove(null); };
+
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [editingPayment, setEditingPayment] = useState(null);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
+  const savePayment = (pm) => {
+    const next = { ...data };
+    next.payments = pm.id
+      ? data.payments.map((x) => (x.id === pm.id ? pm : x))
+      : [...data.payments, { ...pm, id: uid(), projectId }];
+    persist(next);
+    setShowPaymentForm(false);
+    setEditingPayment(null);
+  };
+  const deletePayment = (id) => { persist({ ...data, payments: data.payments.filter((pm) => pm.id !== id) }); setConfirmRemove(null); };
 
   const [exportingContractId, setExportingContractId] = useState(null);
   const [exportError, setExportError] = useState("");
@@ -2389,7 +2499,6 @@ function ProjectDetail({ data, persist, projectId, back }) {
           {contracts.length === 0 && <p className="mv-empty-note">Chưa có hợp đồng nào cho dự án này.</p>}
           {exportError && <p className="mv-drive-script-error">{exportError}</p>}
           {contracts.map((c) => {
-            const clientDebt = c.value - (c.receivedAmount || 0);
             return confirmRemove === c.id ? (
               <ConfirmBar key={c.id} text={`Xoá hợp đồng ${c.contractNumber}?`} onConfirm={() => deleteContract(c.id)} onCancel={() => setConfirmRemove(null)} />
             ) : (
@@ -2402,10 +2511,6 @@ function ProjectDetail({ data, persist, projectId, back }) {
                 <div className="mv-row-right mv-assignment-pay">
                   <div className="mv-assignment-pay-nums">
                     <span className="mv-mono-money">{fmtVND(c.value)}</span>
-                    <span className="mv-row-sub">đã thu {fmtVND(c.receivedAmount || 0)}</span>
-                    <span className={clientDebt > 0 ? "mv-debt-badge" : "mv-paid-badge"}>
-                      {clientDebt > 0 ? `Khách còn nợ ${fmtVND(clientDebt)}` : "Đã thu đủ"}
-                    </span>
                   </div>
                   <div>
                     <button className="mv-btn mv-btn-ghost mv-btn-sm" disabled={exportingContractId === c.id} onClick={() => handleExportContractWord(c)}>
@@ -2419,6 +2524,46 @@ function ProjectDetail({ data, persist, projectId, back }) {
             );
           })}
           {showContractForm && <ContractForm initial={editingContract} onClose={() => { setShowContractForm(false); setEditingContract(null); }} onSave={saveContract} clientName={project.client} />}
+        </div>
+
+        <div className="mv-panel">
+          <div className="mv-panel-head">
+            <h3 className="mv-panel-title"><Wallet size={16} /> Thanh toán từ khách hàng</h3>
+            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingPayment(null); setShowPaymentForm(true); }}><Plus size={14} /> Thêm thanh toán</button>
+          </div>
+          <div className="mv-stats-row mv-stats-row-sm" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+            <StatCard label="Khách phải trả" value={fmtVND(clientTotal)} tone="#3FA9A0" />
+            <StatCard label="Đã thanh toán" value={fmtVND(clientReceived)} tone="#5FB77E" />
+            <StatCard label="Còn nợ" value={fmtVND(clientDebtTotal)} tone={clientDebtTotal > 0 ? "#C1443C" : "#5FB77E"} />
+          </div>
+          {payments.length === 0 && <p className="mv-empty-note">Chưa có thanh toán nào được ghi nhận.</p>}
+          {payments.map((pm) => (
+            confirmRemove === pm.id ? (
+              <ConfirmBar key={pm.id} text="Xoá thanh toán này?" onConfirm={() => deletePayment(pm.id)} onCancel={() => setConfirmRemove(null)} />
+            ) : (
+              <div key={pm.id} className="mv-row-card">
+                {pm.imageDataUrl && (
+                  <img
+                    src={pm.imageDataUrl}
+                    alt="Chứng từ"
+                    className="mv-payment-thumb"
+                    onClick={() => setLightboxSrc(pm.imageDataUrl)}
+                  />
+                )}
+                <div style={{ flex: 1 }}>
+                  <div className="mv-row-title">{fmtVND(pm.amount)} <span className="mv-payment-method-badge">{pm.method}</span></div>
+                  <div className="mv-row-sub mv-mono-date">{fmtDate(pm.date)}</div>
+                  {pm.notes && <div className="mv-row-sub">{pm.notes}</div>}
+                </div>
+                <div className="mv-row-right">
+                  <button className="mv-icon-btn" onClick={() => { setEditingPayment(pm); setShowPaymentForm(true); }}><Pencil size={14} /></button>
+                  <button className="mv-icon-btn" onClick={() => setConfirmRemove(pm.id)}><Trash2 size={14} /></button>
+                </div>
+              </div>
+            )
+          ))}
+          {showPaymentForm && <PaymentForm initial={editingPayment} onClose={() => { setShowPaymentForm(false); setEditingPayment(null); }} onSave={savePayment} />}
+          {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
         </div>
 
         <div className="mv-panel">
@@ -3004,6 +3149,15 @@ const CSS = `
 .mv-conflict-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; position: relative; }
 .mv-conflict-card-recommended { border-color: var(--gold); background: color-mix(in srgb, var(--gold) 10%, var(--surface-2)); }
 .mv-conflict-badge { position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: var(--gold); color: #1D1A16; font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; padding: 2px 10px; border-radius: 10px; }
+
+.mv-payment-thumb { width: 52px; height: 52px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); cursor: pointer; flex-shrink: 0; }
+.mv-payment-preview-wrap { position: relative; display: inline-block; margin-top: 8px; }
+.mv-payment-preview { max-width: 200px; max-height: 200px; border-radius: 8px; border: 1px solid var(--border); display: block; }
+.mv-payment-preview-wrap .mv-icon-btn { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.6); color: #fff; }
+.mv-payment-method-badge { display: inline-block; font-size: 11px; font-weight: 600; color: var(--text-muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 1px 9px; margin-left: 8px; vertical-align: middle; }
+.mv-lightbox-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 30px; }
+.mv-lightbox-img { max-width: 90vw; max-height: 90vh; border-radius: 6px; }
+.mv-lightbox-close { position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.15); border: none; color: #fff; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 
 .mv-app {
   --bg: #14120F;
