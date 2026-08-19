@@ -177,6 +177,25 @@ function loadDocxScript() {
   });
 }
 
+function loadMammothScript() {
+  return new Promise((resolve, reject) => {
+    if (window.mammoth && window.mammoth.convertToHtml) { resolve(); return; }
+    const existing = document.getElementById("mv-mammoth-script");
+    if (existing) {
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error("Không tải được thư viện xem trước")));
+      return;
+    }
+    const s = document.createElement("script");
+    s.id = "mv-mammoth-script";
+    s.src = "https://unpkg.com/mammoth@1.11.0/mammoth.browser.min.js";
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Không tải được thư viện xem trước"));
+    document.head.appendChild(s);
+  });
+}
+
 function numberToVietnameseWords(num) {
   num = Math.round(num);
   if (num === 0) return "Không đồng";
@@ -329,6 +348,24 @@ function buildContractDocument(data) {
         new TableCell({ width: { size: 1900, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: fmtVNDLong(subtotal), bold: true, size: 20 })] })] }),
       ],
     }));
+    rows.push(new TableRow({
+      children: [
+        new TableCell({ columnSpan: 3, width: { size: 7600, type: WidthType.DXA }, shading: { type: ShadingType.CLEAR, fill: "F0E6C8" }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "TỔNG CỘNG (đã bao gồm 8% VAT)", bold: true, size: 20 })] })] }),
+        new TableCell({ width: { size: 1900, type: WidthType.DXA }, shading: { type: ShadingType.CLEAR, fill: "F0E6C8" }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: fmtVNDLong(totalWithVat), bold: true, size: 20 })] })] }),
+      ],
+    }));
+    rows.push(new TableRow({
+      children: [
+        new TableCell({ columnSpan: 3, width: { size: 7600, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "Thuế GTGT (8%)", size: 20 })] })] }),
+        new TableCell({ width: { size: 1900, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: fmtVNDLong(totalWithVat - subtotal), size: 20 })] })] }),
+      ],
+    }));
+    rows.push(new TableRow({
+      children: [
+        new TableCell({ columnSpan: 3, width: { size: 7600, type: WidthType.DXA }, shading: { type: ShadingType.CLEAR, fill: "F0E6C8" }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "TỔNG CỘNG (đã bao gồm VAT)", bold: true, size: 21 })] })] }),
+        new TableCell({ width: { size: 1900, type: WidthType.DXA }, shading: { type: ShadingType.CLEAR, fill: "F0E6C8" }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: fmtVNDLong(totalWithVat), bold: true, size: 21 })] })] }),
+      ],
+    }));
     return new Table({ width: { size: 9500, type: WidthType.DXA }, rows });
   };
 
@@ -417,7 +454,7 @@ function buildContractDocument(data) {
 
   sections.push(
     heading("Điều 2. PHÍ DỊCH VỤ VÀ CHI PHÍ"),
-    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 100, after: 200 }, children: [new TextRun({ text: "BẢNG CHI PHÍ", bold: true, italics: true, color: "C1443C", size: 32 })] }),
+    new Paragraph({ spacing: { before: 100 }, children: [] }),
     buildExpenseTable(),
     p(`(Bằng chữ: ${totalWords}), đã bao gồm 8% thuế GTGT.`, { italics: true }),
     p("Chi phí được áp dụng theo qui định on set 15 tiếng/ngày. Trường hợp thời gian ghi hình vượt quá 15 tiếng/ngày, chi phí thiết bị và các chi phí nhân sự tính theo NGÀY sẽ phát sinh:"),
@@ -1391,6 +1428,24 @@ function ImageLightbox({ src, onClose }) {
   );
 }
 
+function ContractPreviewModal({ preview, onClose, onDownload }) {
+  return (
+    <div className="mv-lightbox-overlay" onClick={onClose}>
+      <div className="mv-contract-preview-card" onClick={(e) => e.stopPropagation()}>
+        <div className="mv-contract-preview-head">
+          <span>Xem trước hợp đồng</span>
+          <button className="mv-icon-btn" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="mv-contract-preview-body" dangerouslySetInnerHTML={{ __html: preview.html }} />
+        <div className="mv-contract-preview-foot">
+          <button className="mv-btn mv-btn-ghost" onClick={onClose}>Đóng, chưa tải</button>
+          <button className="mv-btn mv-btn-primary" onClick={onDownload}><FileText size={15} /> Tải file Word về máy</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ContractForm({ initial, onSave, onClose, clientName }) {
   const [f, setF] = useState(initial || {
     contractNumber: "", value: "", receivedAmount: "", signedDate: "", status: "Chờ ký", paymentTerms: "", notes: "",
@@ -2288,6 +2343,38 @@ function ProjectDetail({ data, persist, projectId, back }) {
 
   const [exportingContractId, setExportingContractId] = useState(null);
   const [exportError, setExportError] = useState("");
+  const [contractPreview, setContractPreview] = useState(null); // { blob, html, filename }
+  const buildContractBlobFor = (c) => {
+    const grouped = CATALOG_GROUPS.map((g) => ({ group: g, items: lineItems.filter((l) => (l.group || "Miscellaneous") === g) }))
+      .concat([{ group: "Khác", items: lineItems.filter((l) => !CATALOG_GROUPS.includes(l.group)) }])
+      .filter((g) => g.items.length > 0);
+    const subtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
+    const totalExtra = lineItems.reduce((s, l) => s + (l.extraAmount || 0), 0);
+    const billableTotal = subtotal + totalExtra;
+    const totalWithVat = billableTotal * 1.08;
+    const doc = buildContractDocument({
+      contractNumber: c.contractNumber,
+      signedDate: c.signedDate || todayISO(),
+      clientB: {
+        name: project.client,
+        representativeName: c.representativeName,
+        representativeTitle: c.representativeTitle,
+        address: c.clientAddress,
+        email: c.clientEmail,
+        taxCode: c.taxCode,
+        phone: c.clientPhone,
+        bankAccount: c.bankAccount,
+        bankName: c.bankName,
+      },
+      project: { name: project.name, serviceDescription: c.serviceDescription, startDate: project.startDate, endDate: project.endDate },
+      lineItemGroups: grouped,
+      subtotal,
+      totalWithVat,
+      payment1Amount: totalWithVat / 2,
+      payment2Amount: totalWithVat / 2,
+    });
+    return window.docx.Packer.toBlob(doc);
+  };
   const handleExportContractWord = async (c) => {
     setExportError("");
     if (lineItems.length === 0) {
@@ -2297,36 +2384,15 @@ function ProjectDetail({ data, persist, projectId, back }) {
     setExportingContractId(c.id);
     try {
       await loadDocxScript();
-      const grouped = CATALOG_GROUPS.map((g) => ({ group: g, items: lineItems.filter((l) => (l.group || "Miscellaneous") === g) }))
-        .concat([{ group: "Khác", items: lineItems.filter((l) => !CATALOG_GROUPS.includes(l.group)) }])
-        .filter((g) => g.items.length > 0);
-      const subtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
-      const totalExtra = lineItems.reduce((s, l) => s + (l.extraAmount || 0), 0);
-      const billableTotal = subtotal + totalExtra;
-      const totalWithVat = billableTotal * 1.08;
-      const doc = buildContractDocument({
-        contractNumber: c.contractNumber,
-        signedDate: c.signedDate || todayISO(),
-        clientB: {
-          name: project.client,
-          representativeName: c.representativeName,
-          representativeTitle: c.representativeTitle,
-          address: c.clientAddress,
-          email: c.clientEmail,
-          taxCode: c.taxCode,
-          phone: c.clientPhone,
-          bankAccount: c.bankAccount,
-          bankName: c.bankName,
-        },
-        project: { name: project.name, serviceDescription: c.serviceDescription, startDate: project.startDate, endDate: project.endDate },
-        lineItemGroups: grouped,
-        subtotal,
-        totalWithVat,
-        payment1Amount: totalWithVat / 2,
-        payment2Amount: totalWithVat / 2,
+      const blob = await buildContractBlobFor(c);
+      await loadMammothScript();
+      const arrayBuffer = await blob.arrayBuffer();
+      const result = await window.mammoth.convertToHtml({ arrayBuffer });
+      setContractPreview({
+        blob,
+        html: result.value,
+        filename: `Hop-dong-${(c.contractNumber || "GADA").replace(/[^a-zA-Z0-9]/g, "-")}.docx`,
       });
-      const blob = await window.docx.Packer.toBlob(doc);
-      downloadBlob(blob, `Hop-dong-${(c.contractNumber || "GADA").replace(/[^a-zA-Z0-9]/g, "-")}.docx`);
     } catch (e) {
       setExportError(e.message || "Không tạo được file hợp đồng.");
     } finally {
@@ -2514,7 +2580,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
                   </div>
                   <div>
                     <button className="mv-btn mv-btn-ghost mv-btn-sm" disabled={exportingContractId === c.id} onClick={() => handleExportContractWord(c)}>
-                      <FileText size={13} /> {exportingContractId === c.id ? "Đang tạo..." : "Tải hợp đồng Word"}
+                      <FileText size={13} /> {exportingContractId === c.id ? "Đang tạo..." : "Xem trước hợp đồng"}
                     </button>
                     <button className="mv-icon-btn" onClick={() => { setEditingContract(c); setShowContractForm(true); }}><Pencil size={14} /></button>
                     <button className="mv-icon-btn" onClick={() => setConfirmRemove(c.id)}><Trash2 size={14} /></button>
@@ -2524,6 +2590,13 @@ function ProjectDetail({ data, persist, projectId, back }) {
             );
           })}
           {showContractForm && <ContractForm initial={editingContract} onClose={() => { setShowContractForm(false); setEditingContract(null); }} onSave={saveContract} clientName={project.client} />}
+          {contractPreview && (
+            <ContractPreviewModal
+              preview={contractPreview}
+              onClose={() => setContractPreview(null)}
+              onDownload={() => { downloadBlob(contractPreview.blob, contractPreview.filename); setContractPreview(null); }}
+            />
+          )}
         </div>
 
         <div className="mv-panel">
@@ -3158,6 +3231,14 @@ const CSS = `
 .mv-lightbox-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 30px; }
 .mv-lightbox-img { max-width: 90vw; max-height: 90vh; border-radius: 6px; }
 .mv-lightbox-close { position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.15); border: none; color: #fff; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+
+.mv-contract-preview-card { width: min(820px, 92vw); max-height: 88vh; background: var(--surface); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
+.mv-contract-preview-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); font-family: 'Oswald', sans-serif; text-transform: uppercase; letter-spacing: 0.03em; font-size: 14px; color: var(--gold); }
+.mv-contract-preview-body { flex: 1; overflow-y: auto; padding: 28px 34px; background: #fff; color: #111; font-family: 'Times New Roman', serif; line-height: 1.5; }
+.mv-contract-preview-body p { margin: 0 0 10px; }
+.mv-contract-preview-body table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+.mv-contract-preview-body td, .mv-contract-preview-body th { border: 1px solid #999; padding: 5px 8px; font-size: 13px; }
+.mv-contract-preview-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--border); }
 
 .mv-app {
   --bg: #14120F;
