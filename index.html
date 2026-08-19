@@ -286,7 +286,7 @@ function buildContractDocument(data) {
     AlignmentType, WidthType, ShadingType, Header, Footer, PageNumber, TabStopType, TabStopPosition,
   } = window.docx;
 
-  const { contractNumber, signedDate, clientB, project, lineItemGroups, subtotal, totalWithVat, payment1Amount, payment2Amount } = data;
+  const { contractNumber, signedDate, clientB, project, lineItemGroups, subtotal, totalWithVat, includeVat, payment1Amount, payment2Amount } = data;
   const totalWords = numberToVietnameseWords(totalWithVat);
   const days = daysBetweenInclusive(project.startDate, project.endDate);
 
@@ -348,12 +348,14 @@ function buildContractDocument(data) {
         new TableCell({ width: { size: 1900, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: fmtVNDLong(subtotal), bold: true, size: 20 })] })] }),
       ],
     }));
-    rows.push(new TableRow({
-      children: [
-        new TableCell({ columnSpan: 3, width: { size: 7600, type: WidthType.DXA }, shading: { type: ShadingType.CLEAR, fill: "F0E6C8" }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "TỔNG CỘNG (đã bao gồm 8% VAT)", bold: true, size: 20 })] })] }),
-        new TableCell({ width: { size: 1900, type: WidthType.DXA }, shading: { type: ShadingType.CLEAR, fill: "F0E6C8" }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: fmtVNDLong(totalWithVat), bold: true, size: 20 })] })] }),
-      ],
-    }));
+    if (includeVat) {
+      rows.push(new TableRow({
+        children: [
+          new TableCell({ columnSpan: 3, width: { size: 7600, type: WidthType.DXA }, shading: { type: ShadingType.CLEAR, fill: "F0E6C8" }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "TỔNG CỘNG (đã bao gồm 8% VAT)", bold: true, size: 20 })] })] }),
+          new TableCell({ width: { size: 1900, type: WidthType.DXA }, shading: { type: ShadingType.CLEAR, fill: "F0E6C8" }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: fmtVNDLong(totalWithVat), bold: true, size: 20 })] })] }),
+        ],
+      }));
+    }
     rows.push(new TableRow({
       children: [
         new TableCell({ columnSpan: 3, width: { size: 7600, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "Thuế GTGT (8%)", size: 20 })] })] }),
@@ -456,7 +458,7 @@ function buildContractDocument(data) {
     heading("Điều 2. PHÍ DỊCH VỤ VÀ CHI PHÍ"),
     new Paragraph({ spacing: { before: 100 }, children: [] }),
     buildExpenseTable(),
-    p(`(Bằng chữ: ${totalWords}), đã bao gồm 8% thuế GTGT.`, { italics: true }),
+    p(`(Bằng chữ: ${totalWords})${includeVat ? ", đã bao gồm 8% thuế GTGT." : "."}`, { italics: true }),
     p("Chi phí được áp dụng theo qui định on set 15 tiếng/ngày. Trường hợp thời gian ghi hình vượt quá 15 tiếng/ngày, chi phí thiết bị và các chi phí nhân sự tính theo NGÀY sẽ phát sinh:"),
     p("Từ tiếng thứ 15 - tiếng thứ 17, phát sinh 50% chi phí nhân sự và thiết bị on set."),
     p("Từ tiếng thứ 17 - tiếng thứ 20, phát sinh 100% chi phí nhân sự và thiết bị on set."),
@@ -1446,7 +1448,7 @@ function ContractPreviewModal({ preview, onClose, onDownload }) {
   );
 }
 
-function ContractForm({ initial, onSave, onClose, clientName }) {
+function ContractForm({ initial, onSave, onClose, clientName, autoValue }) {
   const [f, setF] = useState(initial || {
     contractNumber: "", value: "", receivedAmount: "", signedDate: "", status: "Chờ ký", paymentTerms: "", notes: "",
     serviceDescription: "", representativeName: "", representativeTitle: "", clientAddress: "", clientEmail: "",
@@ -1457,7 +1459,7 @@ function ContractForm({ initial, onSave, onClose, clientName }) {
     <Modal title={initial ? "Sửa hợp đồng" : "Hợp đồng mới"} onClose={onClose} size="xl">
       <div className="mv-form-grid">
         <Field label="Số hợp đồng"><input className="mv-input" value={f.contractNumber} onChange={set("contractNumber")} /></Field>
-        <Field label="Giá trị hợp đồng — khách phải trả (VND)"><input type="number" className="mv-input" value={f.value} onChange={set("value")} /></Field>
+        <Field label="Giá trị hợp đồng — khách phải trả (VND)"><input className="mv-input" value={fmtVND(autoValue)} disabled /></Field>
         <Field label="Ngày ký"><input type="date" className="mv-input" value={f.signedDate} onChange={set("signedDate")} /></Field>
         <Field label="Trạng thái">
           <select className="mv-input" value={f.status} onChange={set("status")}>
@@ -1487,7 +1489,7 @@ function ContractForm({ initial, onSave, onClose, clientName }) {
 
       <div className="mv-modal-actions">
         <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
-        <button className="mv-btn mv-btn-primary" onClick={() => f.contractNumber.trim() && onSave({ ...f, value: Number(f.value) || 0, receivedAmount: Number(f.receivedAmount) || 0 })}>Lưu hợp đồng</button>
+        <button className="mv-btn mv-btn-primary" onClick={() => f.contractNumber.trim() && onSave({ ...f, value: autoValue, receivedAmount: Number(f.receivedAmount) || 0 })}>Lưu hợp đồng</button>
       </div>
     </Modal>
   );
@@ -1788,7 +1790,10 @@ function Dashboard({ data, openProject }) {
 
   const revenueOf = (projectId) => {
     const items = lineItems.filter((l) => l.projectId === projectId);
-    return items.reduce((s, l) => s + l.contractValue + (l.extraAmount || 0), 0);
+    const billable = items.reduce((s, l) => s + l.contractValue + (l.extraAmount || 0), 0);
+    const proj = projects.find((p) => p.id === projectId);
+    const includeVat = !proj || proj.includeVat !== false;
+    return includeVat ? billable * 1.08 : billable;
   };
   const costOf = (projectId) => lineItems.filter((l) => l.projectId === projectId).reduce((s, l) => s + l.actualValue, 0);
 
@@ -2309,10 +2314,15 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const lineItemsDebt = lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0);
   const lineItemsSubtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
   const lineItemsExtraTotal = lineItems.reduce((s, l) => s + (l.extraAmount || 0), 0);
-  const clientTotal = lineItemsSubtotal + lineItemsExtraTotal;
+  const includeVat = project.includeVat !== false; // default true, matches prior behavior
+  const billableTotal = lineItemsSubtotal + lineItemsExtraTotal;
+  const vatAmount = includeVat ? billableTotal * 0.08 : 0;
+  const clientTotal = billableTotal + vatAmount;
   const clientReceived = payments.reduce((s, pm) => s + (pm.amount || 0), 0);
   const clientDebtTotal = clientTotal - clientReceived;
   const profit = clientTotal - lineItemsActual;
+
+  const toggleIncludeVat = () => patchProject({ includeVat: !includeVat });
 
   const patchProject = (patch) => persist({ ...data, projects: data.projects.map((p) => (p.id === projectId ? { ...p, ...patch } : p)) });
 
@@ -2348,10 +2358,6 @@ function ProjectDetail({ data, persist, projectId, back }) {
     const grouped = CATALOG_GROUPS.map((g) => ({ group: g, items: lineItems.filter((l) => (l.group || "Miscellaneous") === g) }))
       .concat([{ group: "Khác", items: lineItems.filter((l) => !CATALOG_GROUPS.includes(l.group)) }])
       .filter((g) => g.items.length > 0);
-    const subtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
-    const totalExtra = lineItems.reduce((s, l) => s + (l.extraAmount || 0), 0);
-    const billableTotal = subtotal + totalExtra;
-    const totalWithVat = billableTotal * 1.08;
     const doc = buildContractDocument({
       contractNumber: c.contractNumber,
       signedDate: c.signedDate || todayISO(),
@@ -2368,10 +2374,11 @@ function ProjectDetail({ data, persist, projectId, back }) {
       },
       project: { name: project.name, serviceDescription: c.serviceDescription, startDate: project.startDate, endDate: project.endDate },
       lineItemGroups: grouped,
-      subtotal,
-      totalWithVat,
-      payment1Amount: totalWithVat / 2,
-      payment2Amount: totalWithVat / 2,
+      subtotal: lineItemsSubtotal,
+      includeVat,
+      totalWithVat: clientTotal,
+      payment1Amount: clientTotal / 2,
+      payment2Amount: clientTotal / 2,
     });
     return window.docx.Packer.toBlob(doc);
   };
@@ -2516,7 +2523,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
                 />
               </div>
             </div>
-            <div><div className="mv-detail-label">Ngân sách <span className="mv-row-sub">(tự tính từ bảng chi phí, chưa VAT)</span></div><div className="mv-detail-value">{fmtVND(lineItemsSubtotal)}</div></div>
+            <div><div className="mv-detail-label">Ngân sách <span className="mv-row-sub">(tự tính từ bảng chi phí{includeVat ? ", đã gồm VAT" : ""})</span></div><div className="mv-detail-value">{fmtVND(clientTotal)}</div></div>
             <div><div className="mv-detail-label">Thời gian</div><div className="mv-detail-value mv-mono-date">{fmtDate(project.startDate)} → {fmtDate(project.endDate)}</div></div>
             <div><div className="mv-detail-label">Thực chi / Còn nợ</div><div className="mv-detail-value"><span style={{ color: "#D4A537" }}>{fmtVND(lineItemsActual)}</span> / <span style={{ color: "#C1443C" }}>{fmtVND(lineItemsDebt)}</span></div></div>
           </div>
@@ -2589,7 +2596,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
               </div>
             );
           })}
-          {showContractForm && <ContractForm initial={editingContract} onClose={() => { setShowContractForm(false); setEditingContract(null); }} onSave={saveContract} clientName={project.client} />}
+          {showContractForm && <ContractForm initial={editingContract} onClose={() => { setShowContractForm(false); setEditingContract(null); }} onSave={saveContract} clientName={project.client} autoValue={clientTotal} />}
           {contractPreview && (
             <ContractPreviewModal
               preview={contractPreview}
@@ -2664,11 +2671,6 @@ function ProjectDetail({ data, persist, projectId, back }) {
           {lineItems.length === 0 && <p className="mv-empty-note mv-no-print">Chưa có hạng mục nào. Kéo hoặc bấm hạng mục ở danh mục trên để thêm — số liệu này vừa dùng làm bảng dự toán gửi khách, vừa dùng để theo dõi thực chi nội bộ.</p>}
 
           {lineItems.length > 0 && (() => {
-            const subtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
-            const totalExtra = lineItems.reduce((s, l) => s + (l.extraAmount || 0), 0);
-            const billableTotal = subtotal + totalExtra;
-            const vat = billableTotal * 0.08;
-            const totalWithVat = billableTotal + vat;
             const grouped = CATALOG_GROUPS.map((g) => ({ group: g, items: lineItems.filter((l) => (l.group || "Miscellaneous") === g) }))
               .concat([{ group: "Khác", items: lineItems.filter((l) => !CATALOG_GROUPS.includes(l.group)) }])
               .filter((g) => g.items.length > 0);
@@ -2676,7 +2678,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
               <>
               <div className="mv-stats-row mv-stats-row-sm mv-no-print">
                 <StatCard label="Thực chi" value={fmtVND(lineItems.reduce((s, l) => s + l.actualValue, 0))} tone="#D4A537" />
-                <StatCard label="Phát sinh" value={fmtVND(totalExtra)} tone={totalExtra > 0 ? "#C1443C" : undefined} />
+                <StatCard label="Phát sinh" value={fmtVND(lineItemsExtraTotal)} tone={lineItemsExtraTotal > 0 ? "#C1443C" : undefined} />
                 <StatCard label="Đã thanh toán" value={fmtVND(lineItems.reduce((s, l) => s + (l.paidAmount || 0), 0))} tone="#5FB77E" />
                 <StatCard label="Còn nợ" value={fmtVND(lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0))} tone="#C1443C" />
               </div>
@@ -2727,12 +2729,12 @@ function ProjectDetail({ data, persist, projectId, back }) {
                 <tbody className="mv-quote-totals-body">
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label">Tổng theo đơn giá</td>
-                    <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(subtotal)}</td>
+                    <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(lineItemsSubtotal)}</td>
                     <td colSpan={4} className="mv-no-print"></td>
                   </tr>
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label">Tổng phát sinh (báo khách)</td>
-                    <td className="mv-quote-amount-cell mv-mono-money" style={{ color: totalExtra > 0 ? "#C1443C" : undefined }}>{fmtVND(totalExtra)}</td>
+                    <td className="mv-quote-amount-cell mv-mono-money" style={{ color: lineItemsExtraTotal > 0 ? "#C1443C" : undefined }}>{fmtVND(lineItemsExtraTotal)}</td>
                     <td colSpan={4} className="mv-no-print"></td>
                   </tr>
                   <tr className="mv-no-print">
@@ -2746,13 +2748,19 @@ function ProjectDetail({ data, persist, projectId, back }) {
                     <td colSpan={4} className="mv-no-print"></td>
                   </tr>
                   <tr>
-                    <td colSpan={3} className="mv-quote-total-label">Thuế VAT (8%)</td>
-                    <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(vat)}</td>
+                    <td colSpan={3} className="mv-quote-total-label mv-no-print">
+                      <label className="mv-vat-toggle">
+                        <input type="checkbox" checked={includeVat} onChange={toggleIncludeVat} />
+                        Thuế VAT (8%)
+                      </label>
+                    </td>
+                    <td colSpan={3} className="mv-quote-total-label mv-print-only">Thuế VAT (8%)</td>
+                    <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(vatAmount)}</td>
                     <td colSpan={4} className="mv-no-print"></td>
                   </tr>
                   <tr>
-                    <td colSpan={3} className="mv-quote-total-label">TỔNG SAU VAT</td>
-                    <td className="mv-quote-amount-cell mv-mono-money mv-quote-total-value">{fmtVND(totalWithVat)}</td>
+                    <td colSpan={3} className="mv-quote-total-label">{includeVat ? "TỔNG SAU VAT" : "TỔNG CỘNG (không VAT)"}</td>
+                    <td className="mv-quote-amount-cell mv-mono-money mv-quote-total-value">{fmtVND(clientTotal)}</td>
                     <td colSpan={4} className="mv-no-print"></td>
                   </tr>
                 </tbody>
@@ -3479,6 +3487,8 @@ const CSS = `
 .mv-quote-num-input { width: 90px; }
 .mv-quote-amount-cell { text-align: right; white-space: nowrap; font-weight: 600; }
 .mv-quote-total-label { text-align: right; font-weight: 700; font-family: 'Oswald', sans-serif; letter-spacing: 0.03em; text-transform: uppercase; font-size: 12.5px; padding-top: 12px; }
+.mv-vat-toggle { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; justify-content: flex-end; width: 100%; }
+.mv-vat-toggle input { width: 15px; height: 15px; cursor: pointer; accent-color: var(--gold); }
 .mv-quote-total-value { font-size: 15px; color: var(--gold); padding-top: 12px; }
 .mv-quote-totals-body { break-inside: avoid; page-break-inside: avoid; }
 .mv-print-sub { font-size: 12px; color: #444; margin-top: 2px; }
