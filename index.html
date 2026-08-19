@@ -2494,6 +2494,17 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const extraWithVat = lineItemsExtraTotal * vatMultiplier;
   const lineItemsWithExtra = lineItems.filter((l) => (l.extraAmount || 0) > 0);
 
+  const paymentsWithMeta = (() => {
+    const asc = [...payments].sort((a, b) => new Date(a.date) - new Date(b.date));
+    let running = 0;
+    const withMeta = asc.map((pm) => {
+      running += pm.amount || 0;
+      return { ...pm, installmentNumber: 0, remainingAfter: clientTotal - running };
+    });
+    withMeta.forEach((pm, i) => { pm.installmentNumber = i + 1; });
+    return withMeta.slice().reverse(); // newest first for display
+  })();
+
   const patchProject = (patch) => persist({ ...data, projects: data.projects.map((p) => (p.id === projectId ? { ...p, ...patch } : p)) });
 
   const saveContract = (c) => {
@@ -2898,6 +2909,48 @@ function ProjectDetail({ data, persist, projectId, back }) {
 
         <div className="mv-panel">
           <div className="mv-panel-head">
+            <h3 className="mv-panel-title"><Wallet size={16} /> Các đợt thanh toán</h3>
+            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingPayment(null); setShowPaymentForm(true); }}><Plus size={14} /> Thêm đợt thanh toán</button>
+          </div>
+          <div className="mv-stats-row mv-stats-row-sm" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
+            <StatCard label="Đã thanh toán" value={fmtVND(clientReceived)} tone="#5FB77E" />
+            <StatCard label="Còn lại phải thu" value={fmtVND(clientDebtTotal)} tone={clientDebtTotal > 0 ? "#C1443C" : "#5FB77E"} />
+          </div>
+          {payments.length === 0 && <p className="mv-empty-note">Chưa có đợt thanh toán nào. Bấm "Thêm đợt thanh toán" mỗi khi khách chuyển tiền — không cần tạo trước các đợt còn trống.</p>}
+          {paymentsWithMeta.map((pm) => (
+            confirmRemove === pm.id ? (
+              <ConfirmBar key={pm.id} text="Xoá đợt thanh toán này?" onConfirm={() => deletePayment(pm.id)} onCancel={() => setConfirmRemove(null)} />
+            ) : (
+              <div key={pm.id} className="mv-row-card">
+                {pm.imageDataUrl && (
+                  <img
+                    src={pm.imageDataUrl}
+                    alt="Chứng từ"
+                    className="mv-payment-thumb"
+                    onClick={() => setLightboxSrc(pm.imageDataUrl)}
+                  />
+                )}
+                <div style={{ flex: 1 }}>
+                  <div className="mv-row-title">
+                    <span className="mv-installment-badge">Đợt {pm.installmentNumber}</span> {fmtVND(pm.amount)} <span className="mv-payment-method-badge">{pm.method}</span>
+                  </div>
+                  <div className="mv-row-sub mv-mono-date">{fmtDate(pm.date)}</div>
+                  {pm.notes && <div className="mv-row-sub">{pm.notes}</div>}
+                  <div className="mv-row-sub">Còn lại sau đợt này: <strong className={pm.remainingAfter > 0 ? "" : "mv-text-green"}>{fmtVND(pm.remainingAfter)}</strong></div>
+                </div>
+                <div className="mv-row-right">
+                  <button className="mv-icon-btn" onClick={() => { setEditingPayment(pm); setShowPaymentForm(true); }}><Pencil size={14} /></button>
+                  <button className="mv-icon-btn" onClick={() => setConfirmRemove(pm.id)}><Trash2 size={14} /></button>
+                </div>
+              </div>
+            )
+          ))}
+          {showPaymentForm && <PaymentForm initial={editingPayment} onClose={() => { setShowPaymentForm(false); setEditingPayment(null); }} onSave={savePayment} />}
+          {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
+        </div>
+
+        <div className="mv-panel">
+          <div className="mv-panel-head">
             <h3 className="mv-panel-title"><CheckCircle2 size={16} /> Nghiệm thu</h3>
             <button className="mv-btn mv-btn-ghost mv-btn-sm" disabled={acceptancePreviewLoading} onClick={handlePreviewAcceptance}>
               <FileText size={13} /> {acceptancePreviewLoading ? "Đang tạo..." : "Xem trước & tải biên bản"}
@@ -2908,10 +2961,6 @@ function ProjectDetail({ data, persist, projectId, back }) {
             <StatCard label="Chi phí ban đầu" value={fmtVND(originalWithVat)} />
             <StatCard label="Phát sinh" value={fmtVND(extraWithVat)} tone={extraWithVat > 0 ? "#C1443C" : undefined} />
             <StatCard label="Tổng cộng sau phát sinh" value={fmtVND(clientTotal)} tone="#3FA9A0" />
-          </div>
-          <div className="mv-stats-row mv-stats-row-sm" style={{ gridTemplateColumns: "repeat(2, 1fr)", marginTop: 10 }}>
-            <StatCard label="Đã thanh toán" value={fmtVND(clientReceived)} tone="#5FB77E" />
-            <StatCard label="Còn phải thanh toán" value={fmtVND(clientDebtTotal)} tone={clientDebtTotal > 0 ? "#C1443C" : "#5FB77E"} />
           </div>
           {lineItemsWithExtra.length > 0 ? (
             <div style={{ marginTop: 14 }}>
@@ -2940,45 +2989,6 @@ function ProjectDetail({ data, persist, projectId, back }) {
           )}
         </div>
 
-        <div className="mv-panel">
-          <div className="mv-panel-head">
-            <h3 className="mv-panel-title"><Wallet size={16} /> Thanh toán từ khách hàng</h3>
-            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingPayment(null); setShowPaymentForm(true); }}><Plus size={14} /> Thêm thanh toán</button>
-          </div>
-          <div className="mv-stats-row mv-stats-row-sm" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-            <StatCard label="Khách phải trả" value={fmtVND(clientTotal)} tone="#3FA9A0" />
-            <StatCard label="Đã thanh toán" value={fmtVND(clientReceived)} tone="#5FB77E" />
-            <StatCard label="Còn nợ" value={fmtVND(clientDebtTotal)} tone={clientDebtTotal > 0 ? "#C1443C" : "#5FB77E"} />
-          </div>
-          {payments.length === 0 && <p className="mv-empty-note">Chưa có thanh toán nào được ghi nhận.</p>}
-          {payments.map((pm) => (
-            confirmRemove === pm.id ? (
-              <ConfirmBar key={pm.id} text="Xoá thanh toán này?" onConfirm={() => deletePayment(pm.id)} onCancel={() => setConfirmRemove(null)} />
-            ) : (
-              <div key={pm.id} className="mv-row-card">
-                {pm.imageDataUrl && (
-                  <img
-                    src={pm.imageDataUrl}
-                    alt="Chứng từ"
-                    className="mv-payment-thumb"
-                    onClick={() => setLightboxSrc(pm.imageDataUrl)}
-                  />
-                )}
-                <div style={{ flex: 1 }}>
-                  <div className="mv-row-title">{fmtVND(pm.amount)} <span className="mv-payment-method-badge">{pm.method}</span></div>
-                  <div className="mv-row-sub mv-mono-date">{fmtDate(pm.date)}</div>
-                  {pm.notes && <div className="mv-row-sub">{pm.notes}</div>}
-                </div>
-                <div className="mv-row-right">
-                  <button className="mv-icon-btn" onClick={() => { setEditingPayment(pm); setShowPaymentForm(true); }}><Pencil size={14} /></button>
-                  <button className="mv-icon-btn" onClick={() => setConfirmRemove(pm.id)}><Trash2 size={14} /></button>
-                </div>
-              </div>
-            )
-          ))}
-          {showPaymentForm && <PaymentForm initial={editingPayment} onClose={() => { setShowPaymentForm(false); setEditingPayment(null); }} onSave={savePayment} />}
-          {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
-        </div>
 
         <div className="mv-panel">
           <h3 className="mv-panel-title"><Plus size={16} /> Danh mục hạng mục</h3>
@@ -3582,6 +3592,8 @@ const CSS = `
 .mv-payment-preview { max-width: 200px; max-height: 200px; border-radius: 8px; border: 1px solid var(--border); display: block; }
 .mv-payment-preview-wrap .mv-icon-btn { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.6); color: #fff; }
 .mv-payment-method-badge { display: inline-block; font-size: 11px; font-weight: 600; color: var(--text-muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 1px 9px; margin-left: 8px; vertical-align: middle; }
+.mv-installment-badge { display: inline-block; font-size: 11px; font-weight: 700; color: #1D1A16; background: var(--gold); border-radius: 10px; padding: 1px 9px; margin-right: 6px; vertical-align: middle; }
+.mv-text-green { color: var(--green); }
 .mv-lightbox-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 30px; }
 .mv-lightbox-img { max-width: 90vw; max-height: 90vh; border-radius: 6px; }
 .mv-lightbox-close { position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.15); border: none; color: #fff; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
