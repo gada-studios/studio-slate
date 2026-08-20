@@ -2030,6 +2030,38 @@ function CompanyCalendar({ data, openProject }) {
   );
 }
 
+function CashFlowChart({ monthlyRows, year }) {
+  const rowsByMonth = {};
+  monthlyRows.forEach((r) => { if (r.year === year) rowsByMonth[r.month] = r; });
+  const chartData = Array.from({ length: 12 }, (_, m) => rowsByMonth[m] || { month: m, revenue: 0, cost: 0 });
+  const maxVal = Math.max(1, ...chartData.map((d) => Math.max(d.revenue, d.cost)));
+  const W = 760, H = 220, padL = 10, padB = 24, padT = 10;
+  const chartW = W - padL * 2;
+  const chartH = H - padB - padT;
+  const groupW = chartW / 12;
+  const barW = groupW * 0.32;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="mv-cashflow-chart" preserveAspectRatio="xMidYMid meet">
+      {[0.25, 0.5, 0.75, 1].map((f) => (
+        <line key={f} x1={padL} x2={W - padL} y1={padT + chartH * (1 - f)} y2={padT + chartH * (1 - f)} className="mv-chart-gridline" />
+      ))}
+      {chartData.map((d, i) => {
+        const x = padL + i * groupW + groupW / 2;
+        const revH = (d.revenue / maxVal) * chartH;
+        const costH = (d.cost / maxVal) * chartH;
+        return (
+          <g key={i}>
+            <rect x={x - barW - 2} y={padT + chartH - revH} width={barW} height={Math.max(revH, 0.5)} rx="2" className="mv-chart-bar-revenue" />
+            <rect x={x + 2} y={padT + chartH - costH} width={barW} height={Math.max(costH, 0.5)} rx="2" className="mv-chart-bar-cost" />
+            <text x={x} y={H - 6} className="mv-chart-axis-label" textAnchor="middle">{MONTH_LABELS[i].replace("Tháng ", "T")}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 function Dashboard({ data, openProject }) {
   const { projects, milestones, contracts, lineItems } = data;
   const active = projects.filter((p) => !["Hoàn thành", "Tạm dừng"].includes(p.status));
@@ -2042,15 +2074,6 @@ function Dashboard({ data, openProject }) {
     return includeVat ? billable * 1.08 : billable;
   };
   const costOf = (projectId) => lineItems.filter((l) => l.projectId === projectId).reduce((s, l) => s + l.actualValue, 0);
-
-  const totalThu = projects.reduce((s, p) => s + revenueOf(p.id), 0);
-  const totalChi = projects.reduce((s, p) => s + costOf(p.id), 0);
-  const totalProfit = totalThu - totalChi;
-
-  const upcoming = milestones
-    .filter((m) => m.status !== "Hoàn thành")
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
-    .slice(0, 6);
 
   // Group revenue/profit by the month each project starts in.
   const monthMap = {};
@@ -2067,49 +2090,25 @@ function Dashboard({ data, openProject }) {
   });
   const monthlyRows = Object.values(monthMap).sort((a, b) => (a.key < b.key ? 1 : -1));
 
+  const availableYears = Array.from(new Set(monthlyRows.map((r) => r.year)));
+  const currentYear = new Date().getFullYear();
+  if (!availableYears.includes(currentYear)) availableYears.push(currentYear);
+  availableYears.sort((a, b) => b - a);
+  const [selectedYear, setSelectedYear] = useState(currentYear);
+
+  const yearRows = monthlyRows.filter((r) => r.year === selectedYear);
+  const yearRevenue = yearRows.reduce((s, r) => s + r.revenue, 0);
+  const yearCost = yearRows.reduce((s, r) => s + r.cost, 0);
+  const yearProfit = yearRevenue - yearCost;
+
+  const upcoming = milestones
+    .filter((m) => m.status !== "Hoàn thành")
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .slice(0, 6);
+
   return (
     <div>
-      <div className="mv-stats-row mv-stats-row-5">
-        <StatCard label="Tổng số dự án" value={projects.length} />
-        <StatCard label="Đang triển khai" value={active.length} tone="#D4A537" />
-        <StatCard label="Tổng doanh thu" value={fmtVND(totalThu)} tone="#5FB77E" />
-        <StatCard label="Tổng chi phí" value={fmtVND(totalChi)} tone="#C1443C" />
-        <StatCard label="Tổng lợi nhuận" value={fmtVND(totalProfit)} tone={totalProfit >= 0 ? "#D4A537" : "#C1443C"} />
-      </div>
-
-      <div className="mv-panel">
-        <h3 className="mv-panel-title"><Wallet size={16} /> Doanh thu &amp; lợi nhuận theo tháng</h3>
-        {monthlyRows.length === 0 ? (
-          <p className="mv-empty-note">Chưa có dự án nào có ngày bắt đầu để thống kê theo tháng.</p>
-        ) : (
-          <table className="mv-quote-table">
-            <thead>
-              <tr>
-                <th>Tháng</th>
-                <th>Doanh thu</th>
-                <th>Chi phí</th>
-                <th>Lợi nhuận</th>
-              </tr>
-            </thead>
-            <tbody>
-              {monthlyRows.map((row) => {
-                const profit = row.revenue - row.cost;
-                return (
-                  <tr key={row.key}>
-                    <td>{MONTH_LABELS[row.month]} {row.year}</td>
-                    <td className="mv-mono-money" style={{ color: "#5FB77E" }}>{fmtVND(row.revenue)}</td>
-                    <td className="mv-mono-money" style={{ color: "#C1443C" }}>{fmtVND(row.cost)}</td>
-                    <td className="mv-quote-amount-cell mv-mono-money" style={{ color: profit >= 0 ? "#D4A537" : "#C1443C" }}>{fmtVND(profit)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-        <p className="mv-row-sub" style={{ marginTop: 10 }}>* Tính theo tháng bắt đầu của dự án (ngày bắt đầu trong "Tổng quan" dự án).</p>
-      </div>
-
-      <div className="mv-dash-grid">
+      <div className="mv-dash-grid" style={{ gridTemplateColumns: "2fr 1fr", marginBottom: 16 }}>
         <div className="mv-panel">
           <h3 className="mv-panel-title"><Film size={16} /> Dự án đang hoạt động</h3>
           {active.length === 0 && <p className="mv-empty-note">Chưa có dự án nào đang hoạt động.</p>}
@@ -2142,6 +2141,56 @@ function Dashboard({ data, openProject }) {
         </div>
       </div>
 
+      <div className="mv-stats-row mv-stats-row-5">
+        <StatCard label="Tổng số dự án" value={projects.length} />
+        <StatCard label="Đang triển khai" value={active.length} tone="#D4A537" />
+        <StatCard label={`Doanh thu năm ${selectedYear}`} value={fmtVND(yearRevenue)} tone="#5FB77E" />
+        <StatCard label={`Chi phí năm ${selectedYear}`} value={fmtVND(yearCost)} tone="#C1443C" />
+        <StatCard label={`Lợi nhuận năm ${selectedYear}`} value={fmtVND(yearProfit)} tone={yearProfit >= 0 ? "#D4A537" : "#C1443C"} />
+      </div>
+
+      <div className="mv-panel">
+        <div className="mv-panel-head">
+          <h3 className="mv-panel-title"><Wallet size={16} /> Dòng tiền theo năm</h3>
+          <select className="mv-input mv-year-select" value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}>
+            {availableYears.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+        <div className="mv-chart-legend">
+          <span><i className="mv-legend-dot mv-legend-revenue" /> Doanh thu</span>
+          <span><i className="mv-legend-dot mv-legend-cost" /> Chi phí</span>
+        </div>
+        <CashFlowChart monthlyRows={monthlyRows} year={selectedYear} />
+        {yearRows.length === 0 ? (
+          <p className="mv-empty-note">Chưa có dự án nào bắt đầu trong năm {selectedYear}.</p>
+        ) : (
+          <table className="mv-quote-table">
+            <thead>
+              <tr>
+                <th>Tháng</th>
+                <th>Doanh thu</th>
+                <th>Chi phí</th>
+                <th>Lợi nhuận</th>
+              </tr>
+            </thead>
+            <tbody>
+              {yearRows.map((row) => {
+                const profit = row.revenue - row.cost;
+                return (
+                  <tr key={row.key}>
+                    <td>{MONTH_LABELS[row.month]}</td>
+                    <td className="mv-mono-money" style={{ color: "#5FB77E" }}>{fmtVND(row.revenue)}</td>
+                    <td className="mv-mono-money" style={{ color: "#C1443C" }}>{fmtVND(row.cost)}</td>
+                    <td className="mv-quote-amount-cell mv-mono-money" style={{ color: profit >= 0 ? "#D4A537" : "#C1443C" }}>{fmtVND(profit)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        <p className="mv-row-sub" style={{ marginTop: 10 }}>* Tính theo tháng bắt đầu của dự án (ngày bắt đầu trong "Tổng quan" dự án).</p>
+      </div>
+
       <CompanyCalendar data={data} openProject={openProject} />
     </div>
   );
@@ -2149,12 +2198,15 @@ function Dashboard({ data, openProject }) {
 
 /* ------------------------------- projects list -------------------------------- */
 
-function ProjectSlateCard({ p, onOpen, onEdit, onDelete }) {
+function ProjectSlateCard({ p, onOpen, onEdit, onDelete, onComplete }) {
   return (
     <div className="mv-slate">
       <div className="mv-slate-clap">
         <div className="mv-slate-stripes" />
         <div className="mv-slate-clap-actions">
+          {p.status !== "Hoàn thành" && (
+            <button className="mv-icon-btn mv-icon-btn-light" title="Đánh dấu hoàn thành" onClick={(e) => { e.stopPropagation(); onComplete(); }}><CheckCircle2 size={14} /></button>
+          )}
           <button className="mv-icon-btn mv-icon-btn-light" onClick={(e) => { e.stopPropagation(); onEdit(); }}><Pencil size={14} /></button>
           <button className="mv-icon-btn mv-icon-btn-light" onClick={(e) => { e.stopPropagation(); onDelete(); }}><Trash2 size={14} /></button>
         </div>
@@ -2180,12 +2232,31 @@ function ProjectsList({ data, persist, openProject }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [listView, setListView] = useState("active"); // active | history
+  const [openHistoryGroups, setOpenHistoryGroups] = useState({});
 
-  const filtered = data.projects.filter((p) => {
-    const matchesQuery = (p.name + p.client + p.director).toLowerCase().includes(query.toLowerCase());
+  const matchesQuery = (p) => (p.name + p.client + p.director).toLowerCase().includes(query.toLowerCase());
+
+  const activeProjects = data.projects.filter((p) => p.status !== "Hoàn thành");
+  const historyProjects = data.projects.filter((p) => p.status === "Hoàn thành");
+
+  const filtered = activeProjects.filter((p) => {
     const matchesStatus = statusFilter === "Tất cả" || p.status === statusFilter;
-    return matchesQuery && matchesStatus;
+    return matchesQuery(p) && matchesStatus;
   });
+
+  const filteredHistory = historyProjects.filter(matchesQuery);
+  const historyByYearMonth = {};
+  filteredHistory.forEach((p) => {
+    const dt = new Date(p.endDate || p.startDate || p._meta?.updatedAt || Date.now());
+    const y = isNaN(dt) ? "Không rõ" : dt.getFullYear();
+    const m = isNaN(dt) ? 0 : dt.getMonth();
+    if (!historyByYearMonth[y]) historyByYearMonth[y] = {};
+    if (!historyByYearMonth[y][m]) historyByYearMonth[y][m] = [];
+    historyByYearMonth[y][m].push(p);
+  });
+  const historyYears = Object.keys(historyByYearMonth).sort((a, b) => b - a);
+  const toggleGroup = (key) => setOpenHistoryGroups((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const saveProject = (proj, pendingMilestones, pendingLineItems) => {
     const next = { ...data };
@@ -2246,6 +2317,12 @@ function ProjectsList({ data, persist, openProject }) {
     persist(next);
     setConfirmDelete(null);
   };
+  const markProjectCompleted = (id) => {
+    persist({ ...data, projects: data.projects.map((p) => (p.id === id ? { ...p, status: "Hoàn thành", progress: 100 } : p)) });
+  };
+  const reopenProject = (id) => {
+    persist({ ...data, projects: data.projects.map((p) => (p.id === id ? { ...p, status: "Tiền kỳ" } : p)) });
+  };
 
   return (
     <div>
@@ -2254,35 +2331,102 @@ function ProjectsList({ data, persist, openProject }) {
           <Search size={16} />
           <input placeholder="Tìm dự án, khách hàng, đạo diễn..." value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
-        <select className="mv-input mv-filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option>Tất cả</option>
-          {PROJECT_STATUSES.map((s) => <option key={s}>{s}</option>)}
-        </select>
+        {listView === "active" && (
+          <select className="mv-input mv-filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option>Tất cả</option>
+            {PROJECT_STATUSES.filter((s) => s !== "Hoàn thành").map((s) => <option key={s}>{s}</option>)}
+          </select>
+        )}
         <button className="mv-btn mv-btn-primary" onClick={() => { setEditing(null); setShowForm(true); }}>
           <Plus size={16} /> Dự án mới
         </button>
       </div>
 
-      {filtered.length === 0 && <p className="mv-empty-note">Không tìm thấy dự án nào.</p>}
-
-      <div className="mv-slate-grid">
-        {filtered.map((p) => (
-          <div key={p.id}>
-            {confirmDelete === p.id ? (
-              <div className="mv-slate mv-slate-confirm">
-                <ConfirmBar text={`Xoá dự án "${p.name}"? Toàn bộ hợp đồng, timeline, nhân sự, dòng tiền liên quan cũng sẽ bị xoá.`} onConfirm={() => deleteProject(p.id)} onCancel={() => setConfirmDelete(null)} />
-              </div>
-            ) : (
-              <ProjectSlateCard
-                p={p}
-                onOpen={() => openProject(p.id)}
-                onEdit={() => { setEditing(p); setShowForm(true); }}
-                onDelete={() => setConfirmDelete(p.id)}
-              />
-            )}
-          </div>
-        ))}
+      <div className="mv-view-toggle" style={{ marginBottom: 16 }}>
+        <button className={listView === "active" ? "mv-view-toggle-active" : ""} onClick={() => setListView("active")}>Đang hoạt động</button>
+        <button className={listView === "history" ? "mv-view-toggle-active" : ""} onClick={() => setListView("history")}>Lịch sử dự án ({historyProjects.length})</button>
       </div>
+
+      {listView === "active" && (
+        <>
+          {filtered.length === 0 && <p className="mv-empty-note">Không tìm thấy dự án nào.</p>}
+          <div className="mv-slate-grid">
+            {filtered.map((p) => (
+              <div key={p.id}>
+                {confirmDelete === p.id ? (
+                  <div className="mv-slate mv-slate-confirm">
+                    <ConfirmBar text={`Xoá dự án "${p.name}"? Toàn bộ hợp đồng, timeline, nhân sự, dòng tiền liên quan cũng sẽ bị xoá.`} onConfirm={() => deleteProject(p.id)} onCancel={() => setConfirmDelete(null)} />
+                  </div>
+                ) : (
+                  <ProjectSlateCard
+                    p={p}
+                    onOpen={() => openProject(p.id)}
+                    onEdit={() => { setEditing(p); setShowForm(true); }}
+                    onDelete={() => setConfirmDelete(p.id)}
+                    onComplete={() => markProjectCompleted(p.id)}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {listView === "history" && (
+        <>
+          {historyYears.length === 0 && <p className="mv-empty-note">Chưa có dự án nào được đánh dấu hoàn thành.</p>}
+          {historyYears.map((year) => (
+            <div key={year} className="mv-panel mv-history-year">
+              <h3 className="mv-panel-title">{year}</h3>
+              {Object.keys(historyByYearMonth[year]).sort((a, b) => b - a).map((month) => {
+                const groupKey = `${year}-${month}`;
+                const isOpen = openHistoryGroups[groupKey] !== false; // default open
+                const monthProjects = historyByYearMonth[year][month];
+                return (
+                  <div key={groupKey} className="mv-history-month">
+                    <button className="mv-history-month-head" onClick={() => toggleGroup(groupKey)}>
+                      <ChevronRight size={14} style={{ transform: isOpen ? "rotate(90deg)" : "none" }} />
+                      {MONTH_LABELS[month]} <span className="mv-row-sub">({monthProjects.length} dự án)</span>
+                    </button>
+                    {isOpen && (
+                      <div className="mv-slate-grid" style={{ marginTop: 10 }}>
+                        {monthProjects.map((p) => (
+                          <div key={p.id}>
+                            {confirmDelete === p.id ? (
+                              <div className="mv-slate mv-slate-confirm">
+                                <ConfirmBar text={`Xoá dự án "${p.name}"? Toàn bộ hợp đồng, timeline, nhân sự, dòng tiền liên quan cũng sẽ bị xoá.`} onConfirm={() => deleteProject(p.id)} onCancel={() => setConfirmDelete(null)} />
+                              </div>
+                            ) : (
+                              <div className="mv-slate">
+                                <div className="mv-slate-clap">
+                                  <div className="mv-slate-stripes" />
+                                  <div className="mv-slate-clap-actions">
+                                    <button className="mv-icon-btn mv-icon-btn-light" title="Mở lại dự án" onClick={(e) => { e.stopPropagation(); reopenProject(p.id); }}><RefreshCw size={14} /></button>
+                                    <button className="mv-icon-btn mv-icon-btn-light" onClick={(e) => { e.stopPropagation(); setConfirmDelete(p.id); }}><Trash2 size={14} /></button>
+                                  </div>
+                                </div>
+                                <div className="mv-slate-body" onClick={() => openProject(p.id)}>
+                                  <div className="mv-slate-row"><span>SCENE</span><strong>{p.name}</strong></div>
+                                  <div className="mv-slate-row"><span>CLIENT</span><strong>{p.client || "—"}</strong></div>
+                                  <div className="mv-slate-footer">
+                                    <Badge status={p.status} />
+                                    <span className="mv-mono-date">{fmtDate(p.startDate)} → {fmtDate(p.endDate)}</span>
+                                  </div>
+                                  <div className="mv-slate-open">Xem chi tiết <ChevronRight size={14} /></div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </>
+      )}
 
       {showForm && (
         <ProjectForm
@@ -4117,6 +4261,21 @@ const CSS = `
 .mv-view-toggle { display: flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
 .mv-view-toggle button { background: none; border: none; color: var(--text-muted); font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-family: inherit; }
 .mv-view-toggle-active { background: var(--gold) !important; color: #1D1A16 !important; }
+
+.mv-year-select { width: auto; padding: 5px 10px; font-size: 13px; }
+.mv-chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+.mv-legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.mv-legend-revenue { background: #5FB77E; }
+.mv-legend-cost { background: #C1443C; }
+.mv-cashflow-chart { width: 100%; height: 220px; display: block; margin-bottom: 6px; }
+.mv-chart-gridline { stroke: var(--border); stroke-width: 1; }
+.mv-chart-bar-revenue { fill: #5FB77E; }
+.mv-chart-bar-cost { fill: #C1443C; }
+.mv-chart-axis-label { fill: var(--text-muted); font-size: 9px; font-family: 'Inter', sans-serif; }
+
+.mv-history-year { margin-bottom: 14px; }
+.mv-history-month { margin-top: 10px; }
+.mv-history-month-head { display: flex; align-items: center; gap: 6px; background: none; border: none; color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer; padding: 4px 0; font-family: inherit; }
 
 .mv-calendar-head { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 12px; }
 .mv-calendar-title { font-family: 'Oswald', sans-serif; font-size: 15px; font-weight: 600; min-width: 140px; text-align: center; }
