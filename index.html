@@ -223,6 +223,21 @@ function loadHtml2CanvasScript() {
   return loadScriptOnce("mv-h2c-script", "https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js", "Không tải được thư viện tạo ảnh");
 }
 
+function printDocument(orientation) {
+  const styleEl = document.createElement("style");
+  styleEl.id = "mv-print-orientation-override";
+  styleEl.textContent = `@media print { @page { size: A4 ${orientation === "landscape" ? "landscape" : "portrait"}; margin: 14mm; } }`;
+  document.head.appendChild(styleEl);
+  const cleanup = () => {
+    const el = document.getElementById("mv-print-orientation-override");
+    if (el) el.remove();
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
+  setTimeout(cleanup, 5000); // fallback in case afterprint doesn't fire
+}
+
 function numberToVietnameseWords(num) {
   num = Math.round(num);
   if (num === 0) return "Không đồng";
@@ -310,10 +325,11 @@ function daysBetweenInclusive(a, b) {
 function buildContractDocument(data) {
   const {
     Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-    AlignmentType, WidthType, ShadingType, Header, Footer, PageNumber, TabStopType, TabStopPosition,
+    AlignmentType, WidthType, ShadingType, Header, Footer, PageNumber, TabStopType, TabStopPosition, PageOrientation,
   } = window.docx;
 
-  const { contractNumber, signedDate, clientB, project, lineItemGroups, subtotal, totalWithVat, includeVat, payment1Amount, payment2Amount } = data;
+  const { contractNumber, signedDate, clientB, project, lineItemGroups, subtotal, totalWithVat, includeVat, payment1Amount, payment2Amount, orientation } = data;
+  const isLandscape = orientation === "landscape";
   const totalWords = numberToVietnameseWords(totalWithVat);
   const days = daysBetweenInclusive(project.startDate, project.endDate);
 
@@ -610,7 +626,7 @@ function buildContractDocument(data) {
 
   return new Document({
     sections: [{
-      properties: { page: { margin: { top: 1200, bottom: 1200, left: 1200, right: 1200 } } },
+      properties: { page: { margin: { top: 1200, bottom: 1200, left: 1200, right: 1200 }, size: { orientation: isLandscape ? PageOrientation.LANDSCAPE : PageOrientation.PORTRAIT } } },
       headers: { default: headerEl },
       footers: { default: footerEl },
       children: sections,
@@ -622,10 +638,11 @@ function buildContractDocument(data) {
 function buildAcceptanceDocument(data) {
   const {
     Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-    AlignmentType, WidthType, ShadingType, Header, Footer, PageNumber, TabStopType, TabStopPosition,
+    AlignmentType, WidthType, ShadingType, Header, Footer, PageNumber, TabStopType, TabStopPosition, PageOrientation,
   } = window.docx;
 
-  const { project, clientName, signedDate, originalWithVat, extraWithVat, totalWithVat, received, remaining, extraItems, includeVat } = data;
+  const { project, clientName, signedDate, originalWithVat, extraWithVat, totalWithVat, received, remaining, extraItems, includeVat, orientation } = data;
+  const isLandscape = orientation === "landscape";
 
   const p = (text, opts = {}) => new Paragraph({
     alignment: opts.align || AlignmentType.JUSTIFIED,
@@ -750,7 +767,7 @@ function buildAcceptanceDocument(data) {
 
   return new Document({
     sections: [{
-      properties: { page: { margin: { top: 1200, bottom: 1200, left: 1200, right: 1200 } } },
+      properties: { page: { margin: { top: 1200, bottom: 1200, left: 1200, right: 1200 }, size: { orientation: isLandscape ? PageOrientation.LANDSCAPE : PageOrientation.PORTRAIT } } },
       headers: { default: headerEl },
       footers: { default: footerEl },
       children: sections,
@@ -1666,7 +1683,7 @@ function ContractPreviewModal({ preview, onClose, onDownload }) {
 function ContractForm({ initial, onSave, onClose, clientName, autoValue }) {
   const [f, setF] = useState(initial || {
     contractNumber: "", value: "", receivedAmount: "", signedDate: "", status: "Chờ ký", paymentTerms: "", notes: "",
-    serviceDescription: "", representativeName: "", representativeTitle: "", clientAddress: "", clientEmail: "",
+    serviceDescription: "", companyName: "", representativeName: "", representativeTitle: "", clientAddress: "", clientEmail: "",
     taxCode: "", clientPhone: "", bankAccount: "", bankName: "",
   });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
@@ -1690,7 +1707,10 @@ function ContractForm({ initial, onSave, onClose, clientName, autoValue }) {
       <Field label={`Nội dung dịch vụ (VD: MV ca nhạc, TVC quảng cáo...)`}>
         <input className="mv-input" value={f.serviceDescription} onChange={set("serviceDescription")} placeholder="MV ca nhạc" />
       </Field>
-      <div className="mv-row-sub" style={{ marginBottom: 8 }}>Thông tin Bên B ({clientName || "khách hàng"}) — dùng để điền vào hợp đồng</div>
+      <div className="mv-row-sub" style={{ marginBottom: 8 }}>Thông tin Bên B — dùng để điền vào hợp đồng</div>
+      <Field label="Tên công ty / đơn vị đối tác (Bên B)">
+        <input className="mv-input" value={f.companyName} onChange={set("companyName")} placeholder={clientName || "VD: CÔNG TY TNHH ABC"} />
+      </Field>
       <div className="mv-form-grid">
         <Field label="Đại diện bởi"><input className="mv-input" value={f.representativeName} onChange={set("representativeName")} placeholder="Ông/Bà ..." /></Field>
         <Field label="Chức vụ"><input className="mv-input" value={f.representativeTitle} onChange={set("representativeTitle")} /></Field>
@@ -1995,13 +2015,20 @@ function CompanyCalendar({ data, openProject }) {
   });
 
   const goMonth = (delta) => setViewDate(new Date(year, month + delta, 1));
-  const handlePrint = () => window.print();
+  const [printOrientation, setPrintOrientation] = useState("landscape");
+  const handlePrint = () => printDocument(printOrientation);
 
   return (
     <div className="mv-panel">
       <div className="mv-panel-head mv-no-print">
         <h3 className="mv-panel-title"><Calendar size={16} /> Lịch tổng quan toàn công ty</h3>
-        <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={handlePrint}><FileText size={14} /> Tải PDF</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div className="mv-orientation-toggle">
+            <button className={printOrientation === "portrait" ? "mv-view-toggle-active" : ""} onClick={() => setPrintOrientation("portrait")}>Dọc</button>
+            <button className={printOrientation === "landscape" ? "mv-view-toggle-active" : ""} onClick={() => setPrintOrientation("landscape")}>Ngang</button>
+          </div>
+          <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={handlePrint}><FileText size={14} /> Tải PDF</button>
+        </div>
       </div>
       <div className="mv-calendar" id="mv-printable-company-calendar">
         <div className="mv-print-only mv-print-header">
@@ -2560,7 +2587,8 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, onDe
     } catch (err) {}
   };
 
-  const handlePrint = () => window.print();
+  const [printOrientation, setPrintOrientation] = useState("landscape");
+  const handlePrint = () => printDocument(printOrientation);
 
   return (
     <div>
@@ -2572,6 +2600,10 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, onDe
       )}
 
       <div className="mv-calendar-toolbar mv-no-print">
+        <div className="mv-orientation-toggle">
+          <button className={printOrientation === "portrait" ? "mv-view-toggle-active" : ""} onClick={() => setPrintOrientation("portrait")}>Dọc</button>
+          <button className={printOrientation === "landscape" ? "mv-view-toggle-active" : ""} onClick={() => setPrintOrientation("landscape")}>Ngang</button>
+        </div>
         <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={handlePrint}><FileText size={14} /> Tải PDF</button>
       </div>
 
@@ -2823,7 +2855,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
       await loadDocxScript();
       const doc = buildAcceptanceDocument({
         project: { name: project.name },
-        clientName: project.client,
+        clientName: (contracts[0] && contracts[0].companyName) || project.client,
         signedDate: todayISO(),
         originalWithVat,
         extraWithVat,
@@ -2832,6 +2864,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
         remaining: clientDebtTotal,
         extraItems: lineItemsWithExtra,
         includeVat,
+        orientation: docOrientation,
       });
       const blob = await window.docx.Packer.toBlob(doc);
       await loadMammothScript();
@@ -2928,6 +2961,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
     }
   };
 
+  const [docOrientation, setDocOrientation] = useState("portrait");
   const [exportingContractId, setExportingContractId] = useState(null);
   const [exportError, setExportError] = useState("");
   const [contractPreview, setContractPreview] = useState(null); // { blob, html, filename }
@@ -2939,7 +2973,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
       contractNumber: c.contractNumber,
       signedDate: c.signedDate || todayISO(),
       clientB: {
-        name: project.client,
+        name: c.companyName || project.client,
         representativeName: c.representativeName,
         representativeTitle: c.representativeTitle,
         address: c.clientAddress,
@@ -2956,6 +2990,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
       totalWithVat: clientTotal,
       payment1Amount: clientTotal / 2,
       payment2Amount: clientTotal / 2,
+      orientation: docOrientation,
     });
     return window.docx.Packer.toBlob(doc);
   };
@@ -3161,7 +3196,13 @@ function ProjectDetail({ data, persist, projectId, back }) {
         <div className="mv-panel">
           <div className="mv-panel-head">
             <h3 className="mv-panel-title"><FileText size={16} /> Hợp đồng</h3>
-            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingContract(null); setShowContractForm(true); }}><Plus size={14} /> Thêm hợp đồng</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div className="mv-orientation-toggle">
+                <button className={docOrientation === "portrait" ? "mv-view-toggle-active" : ""} onClick={() => setDocOrientation("portrait")}>Dọc</button>
+                <button className={docOrientation === "landscape" ? "mv-view-toggle-active" : ""} onClick={() => setDocOrientation("landscape")}>Ngang</button>
+              </div>
+              <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={() => { setEditingContract(null); setShowContractForm(true); }}><Plus size={14} /> Thêm hợp đồng</button>
+            </div>
           </div>
           {contracts.length === 0 && <p className="mv-empty-note">Chưa có hợp đồng nào cho dự án này.</p>}
           {exportError && <p className="mv-drive-script-error">{exportError}</p>}
@@ -3245,9 +3286,15 @@ function ProjectDetail({ data, persist, projectId, back }) {
         <div className="mv-panel">
           <div className="mv-panel-head">
             <h3 className="mv-panel-title"><CheckCircle2 size={16} /> Nghiệm thu</h3>
-            <button className="mv-btn mv-btn-ghost mv-btn-sm" disabled={acceptancePreviewLoading} onClick={handlePreviewAcceptance}>
-              <FileText size={13} /> {acceptancePreviewLoading ? "Đang tạo..." : "Xem trước & tải biên bản"}
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div className="mv-orientation-toggle">
+                <button className={docOrientation === "portrait" ? "mv-view-toggle-active" : ""} onClick={() => setDocOrientation("portrait")}>Dọc</button>
+                <button className={docOrientation === "landscape" ? "mv-view-toggle-active" : ""} onClick={() => setDocOrientation("landscape")}>Ngang</button>
+              </div>
+              <button className="mv-btn mv-btn-ghost mv-btn-sm" disabled={acceptancePreviewLoading} onClick={handlePreviewAcceptance}>
+                <FileText size={13} /> {acceptancePreviewLoading ? "Đang tạo..." : "Xem trước & tải biên bản"}
+              </button>
+            </div>
           </div>
           {acceptanceError && <p className="mv-drive-script-error">{acceptanceError}</p>}
           <div className="mv-stats-row mv-stats-row-sm" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
@@ -3291,14 +3338,18 @@ function ProjectDetail({ data, persist, projectId, back }) {
         <div className="mv-panel" onDragOver={(e) => e.preventDefault()} onDrop={handleCatalogDrop} id="mv-printable-lineitems">
           <div className="mv-panel-head mv-no-print">
             <h3 className="mv-panel-title"><Wallet size={16} /> Bảng dự toán &amp; hạng mục chi phí</h3>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div className="mv-orientation-toggle">
+                <button className={docOrientation === "portrait" ? "mv-view-toggle-active" : ""} onClick={() => setDocOrientation("portrait")}>Dọc</button>
+                <button className={docOrientation === "landscape" ? "mv-view-toggle-active" : ""} onClick={() => setDocOrientation("landscape")}>Ngang</button>
+              </div>
               <div className="mv-export-menu-wrap">
                 <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setShowExpenseExportMenu((v) => !v)}>
                   <FileText size={14} /> Tải xuống {showExpenseExportMenu ? <ChevronRight size={13} style={{ transform: "rotate(90deg)" }} /> : <ChevronRight size={13} style={{ transform: "rotate(-90deg)" }} />}
                 </button>
                 {showExpenseExportMenu && (
                   <div className="mv-export-menu">
-                    <button onClick={() => { setShowExpenseExportMenu(false); window.print(); }}>PDF (gửi khách)</button>
+                    <button onClick={() => { setShowExpenseExportMenu(false); printDocument(docOrientation); }}>PDF (gửi khách)</button>
                     <button onClick={() => { setShowExpenseExportMenu(false); handleExportExpenseExcel(); }}>Excel (.xlsx)</button>
                     <button onClick={() => { setShowExpenseExportMenu(false); handleExportExpenseImage(); }}>Ảnh (.jpg)</button>
                   </div>
@@ -4113,12 +4164,13 @@ const CSS = `
   overflow: hidden;
 }
 .mv-app * { box-sizing: border-box; }
-.mv-shell { display: flex; min-height: 640px; }
+.mv-shell { display: flex; min-height: 100vh; }
 
 .mv-sidebar {
   width: 220px; flex-shrink: 0; background: var(--surface);
   border-right: 1px solid var(--border); padding: 20px 14px;
   display: flex; flex-direction: column; justify-content: space-between;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
 }
 .mv-brand { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin-bottom: 28px; padding: 0 4px; }
 .mv-brand-logo { width: 100%; max-width: 190px; height: auto; object-fit: contain; }
@@ -4286,6 +4338,8 @@ const CSS = `
 .mv-view-toggle { display: flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
 .mv-view-toggle button { background: none; border: none; color: var(--text-muted); font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-family: inherit; }
 .mv-view-toggle-active { background: var(--gold) !important; color: #1D1A16 !important; }
+.mv-orientation-toggle { display: flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+.mv-orientation-toggle button { background: none; border: none; color: var(--text-muted); font-size: 11.5px; font-weight: 600; padding: 5px 9px; border-radius: 6px; cursor: pointer; font-family: inherit; }
 
 .mv-year-select { width: auto; padding: 5px 10px; font-size: 13px; }
 .mv-chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
