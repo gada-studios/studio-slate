@@ -786,7 +786,13 @@ function buildDefaultChecklist(projectId) {
   return items;
 }
 
-const PROJECT_STATUSES = ["Chưa bắt đầu", "Tiền kỳ", "Đang quay", "Hậu kỳ", "Hoàn thành", "Tạm dừng"];
+const PIPELINE_STAGES = ["Tiền kỳ", "Shooting", "Hậu kỳ", "Master", "Hoàn thành"];
+const PROJECT_STATUSES = [...PIPELINE_STAGES, "Tạm dừng"];
+const stageProgress = (status) => {
+  const idx = PIPELINE_STAGES.indexOf(status);
+  if (idx === -1) return null; // e.g. "Tạm dừng" — keep whatever progress it had
+  return Math.round((idx / (PIPELINE_STAGES.length - 1)) * 100);
+};
 const CONTRACT_STATUSES = ["Chờ ký", "Đã ký", "Hết hạn"];
 const MILESTONE_STATUSES = ["Chưa bắt đầu", "Đang thực hiện", "Hoàn thành", "Trễ hạn"];
 const TXN_TYPES = ["Thu", "Chi"];
@@ -863,10 +869,10 @@ const buildDefaultTimelineCatalog = () => {
 };
 
 const STATUS_META = {
-  "Chưa bắt đầu": { color: "#9C948A", icon: Circle },
   "Tiền kỳ": { color: "#3FA9A0", icon: Clock },
-  "Đang quay": { color: "#D4A537", icon: Clock },
-  "Hậu kỳ": { color: "#3FA9A0", icon: Clock },
+  "Shooting": { color: "#D4A537", icon: Clock },
+  "Hậu kỳ": { color: "#8B5FBF", icon: Clock },
+  "Master": { color: "#D9548A", icon: Clock },
   "Hoàn thành": { color: "#5FB77E", icon: CheckCircle2 },
   "Tạm dừng": { color: "#C1443C", icon: PauseCircle },
   "Chờ ký": { color: "#D4A537", icon: Clock },
@@ -1195,7 +1201,13 @@ function normalizeData(d) {
       ]
     : rawLineItems;
   return {
-    projects: n.projects || [],
+    projects: (n.projects || []).map((p) => {
+      const statusMap = { "Chưa bắt đầu": "Tiền kỳ", "Đang quay": "Shooting" };
+      if (!statusMap[p.status]) return p;
+      const newStatus = statusMap[p.status];
+      const auto = stageProgress(newStatus);
+      return { ...p, status: newStatus, progress: auto === null ? p.progress : auto };
+    }),
     contracts: n.contracts || [],
     milestones: n.milestones || [],
     personnel: n.personnel || [],
@@ -1367,9 +1379,14 @@ function Field({ label, children }) {
 
 function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineCatalogItem, catalog, onAddCatalogItem, personnel, onQuickAddPersonnel, suppliers, onQuickAddSupplier }) {
   const [f, setF] = useState(
-    initial || { name: "", client: "", director: "", status: "Chưa bắt đầu", progress: 0, startDate: todayISO(), endDate: "", budget: "", description: "" }
+    initial || { name: "", client: "", director: "", status: "Tiền kỳ", progress: 0, startDate: todayISO(), endDate: "", budget: "", description: "" }
   );
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const setStatus = (e) => {
+    const status = e.target.value;
+    const auto = stageProgress(status);
+    setF({ ...f, status, progress: auto === null ? f.progress : auto });
+  };
 
   const isNew = !initial;
   const STEPS = isNew ? [
@@ -1448,11 +1465,11 @@ function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineC
             <Field label="Khách hàng"><input className="mv-input" value={f.client} onChange={set("client")} /></Field>
             <Field label="Đạo diễn"><input className="mv-input" value={f.director} onChange={set("director")} /></Field>
             <Field label="Trạng thái">
-              <select className="mv-input" value={f.status} onChange={set("status")}>
+              <select className="mv-input" value={f.status} onChange={setStatus}>
                 {PROJECT_STATUSES.map((s) => <option key={s}>{s}</option>)}
               </select>
             </Field>
-            <Field label="Tiến độ (%)"><input type="number" min="0" max="100" className="mv-input" value={f.progress} onChange={set("progress")} /></Field>
+            <Field label="Tiến độ (tự tính theo trạng thái)"><input className="mv-input" value={`${f.progress}%`} disabled /></Field>
             <Field label="Ngày bắt đầu"><input type="date" className="mv-input" value={f.startDate} onChange={set("startDate")} /></Field>
             <Field label="Ngày kết thúc dự kiến"><input type="date" className="mv-input" value={f.endDate} onChange={set("endDate")} /></Field>
           </div>
@@ -2212,7 +2229,7 @@ function ProjectSlateCard({ p, onOpen, onEdit, onDelete, onComplete }) {
         </div>
       </div>
       <div className="mv-slate-body" onClick={onOpen}>
-        <div className="mv-slate-row"><span>SCENE</span><strong>{p.name}</strong></div>
+        <div className="mv-slate-row"><span>PROJECT</span><strong>{p.name}</strong></div>
         <div className="mv-slate-row"><span>CLIENT</span><strong>{p.client || "—"}</strong></div>
         <div className="mv-slate-row"><span>DIR.</span><strong>{p.director || "—"}</strong></div>
         <div className="mv-slate-footer">
@@ -2406,7 +2423,7 @@ function ProjectsList({ data, persist, openProject }) {
                                   </div>
                                 </div>
                                 <div className="mv-slate-body" onClick={() => openProject(p.id)}>
-                                  <div className="mv-slate-row"><span>SCENE</span><strong>{p.name}</strong></div>
+                                  <div className="mv-slate-row"><span>PROJECT</span><strong>{p.name}</strong></div>
                                   <div className="mv-slate-row"><span>CLIENT</span><strong>{p.client || "—"}</strong></div>
                                   <div className="mv-slate-footer">
                                     <Badge status={p.status} />
@@ -3083,16 +3100,21 @@ function ProjectDetail({ data, persist, projectId, back }) {
         <div className="mv-panel">
           <div className="mv-overview-grid">
             <div>
-              <div className="mv-detail-label">Tiến độ tổng thể</div>
+              <div className="mv-detail-label">Tiến độ tổng thể — {project.status}</div>
               <div className="mv-overview-progress">
                 <ProgressBar value={project.progress} />
                 <span className="mv-mono-date">{project.progress}%</span>
               </div>
-              <div className="mv-inline-progress-edit">
-                <input
-                  type="range" min="0" max="100" value={project.progress}
-                  onChange={(e) => patchProject({ progress: Number(e.target.value) })}
-                />
+              <div className="mv-stage-picker">
+                {PIPELINE_STAGES.map((stage, i) => (
+                  <button
+                    key={stage}
+                    className={`mv-stage-btn ${project.status === stage ? "mv-stage-btn-active" : ""} ${PIPELINE_STAGES.indexOf(project.status) > i ? "mv-stage-btn-done" : ""}`}
+                    onClick={() => patchProject({ status: stage, progress: stageProgress(stage) })}
+                  >
+                    {stage}
+                  </button>
+                ))}
               </div>
             </div>
             <div><div className="mv-detail-label">Ngân sách <span className="mv-row-sub">(tự tính từ bảng chi phí{includeVat ? ", đã gồm VAT" : ""})</span></div><div className="mv-detail-value">{fmtVND(clientTotal)}</div></div>
@@ -4215,7 +4237,10 @@ const CSS = `
 .mv-detail-value { font-size: 15px; font-weight: 600; }
 .mv-overview-progress { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .mv-overview-progress .mv-progress { flex: 1; }
-.mv-inline-progress-edit input { width: 100%; accent-color: var(--gold); }
+.mv-stage-picker { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.mv-stage-btn { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted); font-size: 11.5px; font-weight: 600; padding: 6px 12px; border-radius: 20px; cursor: pointer; font-family: inherit; }
+.mv-stage-btn-done { background: color-mix(in srgb, var(--green) 20%, var(--surface-2)); border-color: var(--green); color: var(--green); }
+.mv-stage-btn-active { background: var(--gold); border-color: var(--gold); color: #1D1A16; }
 .mv-desc { color: var(--text-muted); font-size: 13.5px; line-height: 1.6; margin: 4px 0 0; }
 
 .mv-row-card { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--border); }
