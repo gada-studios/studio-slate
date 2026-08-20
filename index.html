@@ -80,6 +80,7 @@ const PauseCircle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><line x1
 const Circle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/></Icon>;
 
 const Cloud = (p) => <Icon {...p}><path d="M17.5 19H9a7 7 0 1 1 6.71-9h.79a4.5 4.5 0 1 1 0 9z"/></Icon>;
+const Building2 = (p) => <Icon {...p}><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></Icon>;
 const CloudOff = (p) => <Icon {...p}><path d="M22.61 16.95A5 5 0 0 0 18 10h-1.26a8 8 0 0 0-7.05-6M5 5 1 1a10.66 10.66 0 0 0-1.66 1.71A5 5 0 0 0 6 15h11m2 2 4 4"/><line x1="1" y1="1" x2="23" y2="23"/></Icon>;
 const RefreshCw = (p) => <Icon {...p}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>;
 const Unlink = (p) => <Icon {...p}><path d="M18.84 12.25l1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="M5.17 11.75l-1.72 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><line x1="8" y1="2" x2="8" y2="5"/><line x1="2" y1="8" x2="5" y2="8"/><line x1="16" y1="19" x2="16" y2="22"/><line x1="19" y1="16" x2="22" y2="16"/></Icon>;
@@ -1205,6 +1206,7 @@ function normalizeData(d) {
     timelineCatalog: n.timelineCatalog || buildDefaultTimelineCatalog(),
     payments: n.payments || [],
     checklistItems: n.checklistItems || [],
+    suppliers: n.suppliers || [],
     _meta: n._meta || { updatedAt: new Date().toISOString() },
   };
 }
@@ -1363,7 +1365,7 @@ function Field({ label, children }) {
 
 /* ------------------------------- form: project ------------------------------ */
 
-function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineCatalogItem, catalog, onAddCatalogItem, personnel, onQuickAddPersonnel }) {
+function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineCatalogItem, catalog, onAddCatalogItem, personnel, onQuickAddPersonnel, suppliers, onQuickAddSupplier }) {
   const [f, setF] = useState(
     initial || { name: "", client: "", director: "", status: "Chưa bắt đầu", progress: 0, startDate: todayISO(), endDate: "", budget: "", description: "" }
   );
@@ -1538,6 +1540,8 @@ function ProjectForm({ initial, onSave, onClose, timelineCatalog, onAddTimelineC
               onSave={saveLocalLineItem}
               personnel={personnel}
               onQuickAddPersonnel={onQuickAddPersonnel}
+              suppliers={suppliers}
+              onQuickAddSupplier={onQuickAddSupplier}
             />
           )}
         </div>
@@ -1691,16 +1695,18 @@ function ContractForm({ initial, onSave, onClose, clientName, autoValue }) {
 
 /* ------------------------------ form: line item (hạng mục) ------------------------------ */
 
-function LineItemForm({ initial, onSave, onClose, personnel, onQuickAddPersonnel }) {
+function LineItemForm({ initial, onSave, onClose, personnel, onQuickAddPersonnel, suppliers, onQuickAddSupplier }) {
   const [f, setF] = useState(() => {
     if (initial) {
       const contractValue = initial.contractValue || 0;
       return { quantity: 1, unitPrice: contractValue, group: CATALOG_GROUPS[0], personnelId: "", extraAmount: 0, actualValue: contractValue, ...initial };
     }
-    return { name: "", group: CATALOG_GROUPS[0], personnelId: "", quantity: 1, unitPrice: "", contractValue: "", extraAmount: "", actualValue: "", paidAmount: "", notes: "" };
+    return { name: "", group: CATALOG_GROUPS[0], personnelId: "", supplierId: "", quantity: 1, unitPrice: "", contractValue: "", extraAmount: "", actualValue: "", paidAmount: "", notes: "" };
   });
   const [showQuickAddPerson, setShowQuickAddPerson] = useState(false);
   const [quickPersonName, setQuickPersonName] = useState("");
+  const [showQuickAddSupplier, setShowQuickAddSupplier] = useState(false);
+  const [quickSupplierName, setQuickSupplierName] = useState("");
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const computedContractValue = (Number(f.quantity) || 0) * (Number(f.unitPrice) || 0);
   const totalBilledToClient = computedContractValue + (Number(f.extraAmount) || 0);
@@ -1711,6 +1717,13 @@ function LineItemForm({ initial, onSave, onClose, personnel, onQuickAddPersonnel
     setF({ ...f, personnelId: newPerson.id });
     setQuickPersonName("");
     setShowQuickAddPerson(false);
+  };
+  const handleQuickAddSupplier = () => {
+    if (!quickSupplierName.trim()) return;
+    const newSupplier = onQuickAddSupplier({ name: quickSupplierName.trim(), contactPerson: "", phone: "", email: "" });
+    setF({ ...f, supplierId: newSupplier.id });
+    setQuickSupplierName("");
+    setShowQuickAddSupplier(false);
   };
 
   return (
@@ -1743,6 +1756,25 @@ function LineItemForm({ initial, onSave, onClose, personnel, onQuickAddPersonnel
                 {personnel.map((p) => <option key={p.id} value={p.id}>{p.name} — {p.role}</option>)}
               </select>
               <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setShowQuickAddPerson(true)}>+ Nhân sự mới</button>
+            </div>
+          )}
+        </Field>
+      )}
+      {f.group !== "Nhân sự" && suppliers && (
+        <Field label="Nhà cung cấp phụ trách">
+          {showQuickAddSupplier ? (
+            <div className="mv-catalog-add-form">
+              <input className="mv-input" placeholder="Tên công ty/đơn vị mới" value={quickSupplierName} onChange={(e) => setQuickSupplierName(e.target.value)} />
+              <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={handleQuickAddSupplier}>Thêm</button>
+              <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setShowQuickAddSupplier(false)}>Huỷ</button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8 }}>
+              <select className="mv-input" value={f.supplierId} onChange={set("supplierId")}>
+                <option value="">— Chưa gán —</option>
+                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setShowQuickAddSupplier(true)}>+ Đơn vị mới</button>
             </div>
           )}
         </Field>
@@ -1806,6 +1838,26 @@ function MilestoneForm({ initial, onSave, onClose }) {
 }
 
 /* ------------------------------ form: personnel ------------------------------ */
+
+function SupplierForm({ initial, onSave, onClose }) {
+  const [f, setF] = useState(initial || { name: "", contactPerson: "", phone: "", email: "", notes: "" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <Modal title={initial ? "Sửa nhà cung cấp" : "Thêm nhà cung cấp"} onClose={onClose}>
+      <div className="mv-form-grid">
+        <Field label="Tên công ty / đơn vị"><input className="mv-input" value={f.name} onChange={set("name")} placeholder="VD: Rental House ABC" /></Field>
+        <Field label="Người liên hệ"><input className="mv-input" value={f.contactPerson} onChange={set("contactPerson")} /></Field>
+        <Field label="Số điện thoại"><input className="mv-input" value={f.phone} onChange={set("phone")} /></Field>
+        <Field label="Email"><input className="mv-input" value={f.email} onChange={set("email")} /></Field>
+      </div>
+      <Field label="Ghi chú"><textarea className="mv-input" rows={2} value={f.notes} onChange={set("notes")} /></Field>
+      <div className="mv-modal-actions">
+        <button className="mv-btn mv-btn-ghost" onClick={onClose}>Huỷ</button>
+        <button className="mv-btn mv-btn-primary" onClick={() => f.name.trim() && onSave(f)}>Lưu đơn vị</button>
+      </div>
+    </Modal>
+  );
+}
 
 function PersonnelForm({ initial, onSave, onClose }) {
   const [f, setF] = useState(initial || { name: "", role: "", phone: "", email: "", dayRate: "" });
@@ -2174,6 +2226,11 @@ function ProjectsList({ data, persist, openProject }) {
     persist({ ...data, personnel: [...data.personnel, newPerson] });
     return newPerson;
   };
+  const quickAddSupplierGlobal = (supplierData) => {
+    const newSupplier = { ...supplierData, id: uid() };
+    persist({ ...data, suppliers: [...data.suppliers, newSupplier] });
+    return newSupplier;
+  };
 
   const deleteProject = (id) => {
     const next = {
@@ -2238,6 +2295,8 @@ function ProjectsList({ data, persist, openProject }) {
           onAddCatalogItem={addCatalogItem}
           personnel={data.personnel}
           onQuickAddPersonnel={quickAddPersonnelGlobal}
+          suppliers={data.suppliers}
+          onQuickAddSupplier={quickAddSupplierGlobal}
         />
       )}
     </div>
@@ -2508,6 +2567,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const lineItems = data.lineItems.filter((l) => l.projectId === projectId);
   const milestones = data.milestones.filter((m) => m.projectId === projectId).sort((a, b) => new Date(a.date) - new Date(b.date));
   const crewLineItems = lineItems.filter((l) => l.group === "Nhân sự" && l.personnelId);
+  const supLineItems = lineItems.filter((l) => l.group !== "Nhân sự" && l.supplierId);
   const payments = data.payments.filter((pm) => pm.projectId === projectId).sort((a, b) => new Date(b.date) - new Date(a.date));
   const checklistItems = data.checklistItems.filter((c) => c.projectId === projectId);
   const transactions = data.transactions.filter((t) => t.projectId === projectId).sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -2792,6 +2852,11 @@ function ProjectDetail({ data, persist, projectId, back }) {
     persist({ ...data, personnel: [...data.personnel, newPerson] });
     return newPerson;
   };
+  const quickAddSupplier = (supplierData) => {
+    const newSupplier = { ...supplierData, id: uid() };
+    persist({ ...data, suppliers: [...data.suppliers, newSupplier] });
+    return newSupplier;
+  };
 
   const saveMilestone = (m) => {
     const next = { ...data };
@@ -2818,6 +2883,11 @@ function ProjectDetail({ data, persist, projectId, back }) {
     setEditingLineItem({ name: "", group: "Nhân sự", personnelId: "", quantity: 1, unitPrice: "", contractValue: "", extraAmount: "", paidAmount: "", notes: "" });
     setShowLineItemForm(true);
   };
+  const supList = supLineItems.map((l) => ({ ...l, supplier: data.suppliers.find((s) => s.id === l.supplierId) }));
+  const addSupplier = () => {
+    setEditingLineItem({ name: "", group: "Location", supplierId: "", quantity: 1, unitPrice: "", contractValue: "", extraAmount: "", paidAmount: "", notes: "" });
+    setShowLineItemForm(true);
+  };
 
   const handleExportProject = () => {
     const bundle = {
@@ -2838,6 +2908,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
     { id: "timeline", label: "Timeline", icon: Calendar },
     { id: "checklist", label: "Checklist", icon: CheckCircle2 },
     { id: "crew", label: "Nhân sự", icon: Users },
+    { id: "sup", label: "SUP", icon: Building2 },
   ];
 
   return (
@@ -3342,6 +3413,50 @@ function ProjectDetail({ data, persist, projectId, back }) {
         </div>
       )}
 
+      {tab === "sup" && (
+        <div className="mv-panel">
+          <div className="mv-panel-head">
+            <h3 className="mv-panel-title"><Building2 size={16} /> Nhà cung cấp (SUP) tham gia dự án</h3>
+            <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={addSupplier}><Plus size={14} /> Thêm nhà cung cấp</button>
+          </div>
+          {supList.length === 0 && <p className="mv-empty-note">Chưa có nhà cung cấp nào được gán vào dự án này. Bấm "Thêm nhà cung cấp", hoặc khi thêm/sửa bất kỳ hạng mục nào (trừ Nhân sự) ở tab Dòng tiền, chọn đơn vị phụ trách trong ô "Nhà cung cấp phụ trách".</p>}
+          {supList.length > 0 && (
+            <div className="mv-stats-row mv-stats-row-sm" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+              <StatCard label="Tổng chi phí" value={fmtVND(supList.reduce((s, l) => s + l.actualValue, 0))} />
+              <StatCard label="Đã thanh toán" value={fmtVND(supList.reduce((s, l) => s + (l.paidAmount || 0), 0))} tone="#5FB77E" />
+              <StatCard label="Còn nợ" value={fmtVND(supList.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0))} tone="#C1443C" />
+            </div>
+          )}
+          {supList.map((l) => {
+            const debt = l.actualValue - (l.paidAmount || 0);
+            return confirmRemove === l.id ? (
+              <ConfirmBar key={l.id} text={`Bỏ ${l.supplier?.name || "đơn vị"} khỏi dự án?`} onConfirm={() => deleteLineItem(l.id)} onCancel={() => setConfirmRemove(null)} />
+            ) : (
+              <div key={l.id} className="mv-row-card mv-row-card-wrap mv-quote-row-clickable" onClick={() => { setEditingLineItem(l); setShowLineItemForm(true); }}>
+                <div>
+                  <div className="mv-row-title">{l.supplier?.name || "(đã xoá khỏi danh sách)"}</div>
+                  <div className="mv-row-sub">{l.name} · {l.supplier?.contactPerson} {l.supplier?.phone}</div>
+                  {(l.extraAmount || 0) > 0 && <div className="mv-row-sub">Bao gồm phát sinh: {fmtVND(l.extraAmount)}</div>}
+                </div>
+                <div className="mv-row-right mv-assignment-pay" onClick={(e) => e.stopPropagation()}>
+                  <div className="mv-assignment-pay-nums">
+                    <span className="mv-mono-money">{fmtVND(l.actualValue)}</span>
+                    <span className={debt > 0 ? "mv-debt-badge" : "mv-paid-badge"}>
+                      {debt > 0 ? `Còn nợ ${fmtVND(debt)}` : "Đã trả đủ"}
+                    </span>
+                  </div>
+                  {debt > 0 && (
+                    <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => markLineItemPaid(l.id, l.actualValue)}>Đánh dấu đã trả đủ</button>
+                  )}
+                  <button className="mv-icon-btn" onClick={() => { setEditingLineItem(l); setShowLineItemForm(true); }}><Pencil size={14} /></button>
+                  <button className="mv-icon-btn" onClick={() => setConfirmRemove(l.id)}><Trash2 size={14} /></button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {showLineItemForm && (
         <LineItemForm
           initial={editingLineItem}
@@ -3349,6 +3464,8 @@ function ProjectDetail({ data, persist, projectId, back }) {
           onSave={saveLineItem}
           personnel={data.personnel}
           onQuickAddPersonnel={quickAddPersonnel}
+          suppliers={data.suppliers}
+          onQuickAddSupplier={quickAddSupplier}
         />
       )}
     </div>
@@ -3436,6 +3553,88 @@ function PersonnelPage({ data, persist }) {
       </div>
 
       {showForm && <PersonnelForm initial={editing} onClose={() => { setShowForm(false); setEditing(null); }} onSave={save} />}
+    </div>
+  );
+}
+
+function SuppliersPage({ data, persist }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [query, setQuery] = useState("");
+
+  const save = (s) => {
+    const next = { ...data };
+    next.suppliers = s.id ? data.suppliers.map((x) => (x.id === s.id ? s : x)) : [...data.suppliers, { ...s, id: uid() }];
+    persist(next);
+    setShowForm(false);
+    setEditing(null);
+  };
+
+  const del = (id) => {
+    persist({
+      ...data,
+      suppliers: data.suppliers.filter((s) => s.id !== id),
+      lineItems: data.lineItems.map((l) => (l.supplierId === id ? { ...l, supplierId: "" } : l)),
+    });
+    setConfirmDelete(null);
+  };
+
+  const filtered = data.suppliers.filter((s) => (s.name + (s.contactPerson || "")).toLowerCase().includes(query.toLowerCase()));
+
+  const itemsOf = (supplierId) => data.lineItems.filter((l) => l.group !== "Nhân sự" && l.supplierId === supplierId);
+  const projectCount = (supplierId) => new Set(itemsOf(supplierId).map((l) => l.projectId)).size;
+  const debtOf = (supplierId) => itemsOf(supplierId).reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0);
+  const totalDebtAll = data.suppliers.reduce((s, sup) => s + debtOf(sup.id), 0);
+
+  return (
+    <div>
+      <div className="mv-toolbar">
+        <div className="mv-search">
+          <Search size={16} />
+          <input placeholder="Tìm nhà cung cấp theo tên hoặc người liên hệ..." value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <button className="mv-btn mv-btn-primary" onClick={() => { setEditing(null); setShowForm(true); }}><Plus size={16} /> Thêm nhà cung cấp</button>
+      </div>
+
+      {data.suppliers.length > 0 && (
+        <div className="mv-stats-row mv-stats-row-sm" style={{ gridTemplateColumns: "repeat(2, 1fr)", maxWidth: 480 }}>
+          <StatCard label="Số nhà cung cấp" value={data.suppliers.length} />
+          <StatCard label="Tổng công nợ chưa trả" value={fmtVND(totalDebtAll)} tone={totalDebtAll > 0 ? "#C1443C" : "#5FB77E"} />
+        </div>
+      )}
+
+      {filtered.length === 0 && <p className="mv-empty-note">Chưa có nhà cung cấp nào.</p>}
+
+      <div className="mv-crew-grid">
+        {filtered.map((s) => (
+          confirmDelete === s.id ? (
+            <div key={s.id} className="mv-panel"><ConfirmBar text={`Xoá nhà cung cấp "${s.name}"? Sẽ được gỡ khỏi mọi dự án.`} onConfirm={() => del(s.id)} onCancel={() => setConfirmDelete(null)} /></div>
+          ) : (
+            <div key={s.id} className="mv-crew-card">
+              <div className="mv-crew-avatar"><Building2 size={18} /></div>
+              <div className="mv-crew-info">
+                <div className="mv-row-title">{s.name}</div>
+                <div className="mv-row-sub">{s.contactPerson}</div>
+                <div className="mv-crew-contact">
+                  {s.phone && <span><Phone size={12} /> {s.phone}</span>}
+                  {s.email && <span><Mail size={12} /> {s.email}</span>}
+                </div>
+                <div className="mv-row-sub">{projectCount(s.id)} dự án</div>
+                {debtOf(s.id) > 0 && (
+                  <div className="mv-debt-badge" style={{ marginTop: 6, display: "inline-block" }}>Đang nợ {fmtVND(debtOf(s.id))}</div>
+                )}
+              </div>
+              <div className="mv-row-right mv-crew-actions">
+                <button className="mv-icon-btn" onClick={() => { setEditing(s); setShowForm(true); }}><Pencil size={14} /></button>
+                <button className="mv-icon-btn" onClick={() => setConfirmDelete(s.id)}><Trash2 size={14} /></button>
+              </div>
+            </div>
+          )
+        ))}
+      </div>
+
+      {showForm && <SupplierForm initial={editing} onClose={() => { setShowForm(false); setEditing(null); }} onSave={save} />}
     </div>
   );
 }
@@ -3601,6 +3800,7 @@ function App() {
     { id: "dashboard", label: "Tổng quan", icon: LayoutDashboard },
     { id: "projects", label: "Dự án", icon: Film },
     { id: "personnel", label: "Nhân sự", icon: Users },
+    { id: "suppliers", label: "Nhà cung cấp", icon: Building2 },
   ];
 
   return (
@@ -3681,6 +3881,7 @@ function App() {
               {view === "projects" && <ProjectsList data={data} persist={persist} openProject={openProject} />}
               {view === "project" && <ProjectDetail data={data} persist={persist} projectId={activeProjectId} back={() => setView("projects")} />}
               {view === "personnel" && <PersonnelPage data={data} persist={persist} />}
+              {view === "suppliers" && <SuppliersPage data={data} persist={persist} />}
             </>
           )}
         </main>
