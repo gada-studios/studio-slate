@@ -758,6 +758,33 @@ function buildAcceptanceDocument(data) {
   });
 }
 
+const CHECKLIST_STATUSES = ["Chưa làm", "Đang làm", "Xong", "Đang chờ update thông tin"];
+const CHECKLIST_STATUS_META = {
+  "Chưa làm": { bg: "#C1443C", fg: "#fff" },
+  "Đang làm": { bg: "#3B6EA5", fg: "#fff" },
+  "Xong": { bg: "#3F7D4E", fg: "#fff" },
+  "Đang chờ update thông tin": { bg: "#7B4FA0", fg: "#fff" },
+};
+const CHECKLIST_TEMPLATE = [
+  { category: "LOCATION", tasks: ["Tìm bối cảnh + Scout", "Lock bối cảnh + deal chi phí"] },
+  { category: "DIỄN VIÊN", tasks: ["Đã catchup lịch diễn viên"] },
+  { category: "SET DESIGN", tasks: ["Idea - vẽ set", "Check giá set thực tế", "Sửa set", "Lock chi phí", "Xử lý phát sinh thêm nếu có"] },
+  { category: "LOGISTIC", tasks: ["Scout", "Recce", "Phương án di chuyển", "Khách sạn Ekip"] },
+  { category: "BOOK EKIP + LOCK CHI PHÍ", tasks: ["Lock key team", "Double check lại 1 lượt nhân sự, xem còn thiếu ai ko"] },
+  { category: "THIẾT BỊ MÁY + ĐÈN", tasks: ["Lấy list thiết bị", "Check giá máy", "Check giá đèn"] },
+  { category: "GIẤY TỜ - FILE", tasks: ["Callsheet", "PPM deck", "Check list dự án"] },
+  { category: "GIẤY TỜ HỢP ĐỒNG", tasks: ["Làm hợp đồng", "Thanh toán đợt 1", "BBNT", "Thanh toán đợt 2"] },
+];
+function buildDefaultChecklist(projectId) {
+  const items = [];
+  CHECKLIST_TEMPLATE.forEach(({ category, tasks }) => {
+    tasks.forEach((task) => {
+      items.push({ id: uid(), projectId, category, task, status: "Chưa làm", detail: "", deadline: "" });
+    });
+  });
+  return items;
+}
+
 const PROJECT_STATUSES = ["Chưa bắt đầu", "Tiền kỳ", "Đang quay", "Hậu kỳ", "Hoàn thành", "Tạm dừng"];
 const CONTRACT_STATUSES = ["Chờ ký", "Đã ký", "Hết hạn"];
 const MILESTONE_STATUSES = ["Chưa bắt đầu", "Đang thực hiện", "Hoàn thành", "Trễ hạn"];
@@ -1177,6 +1204,7 @@ function normalizeData(d) {
     catalog: ensureCatalogDefaults(n.catalog || []),
     timelineCatalog: n.timelineCatalog || buildDefaultTimelineCatalog(),
     payments: n.payments || [],
+    checklistItems: n.checklistItems || [],
     _meta: n._meta || { updatedAt: new Date().toISOString() },
   };
 }
@@ -2458,6 +2486,15 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const [editingMilestone, setEditingMilestone] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null);
 
+  useEffect(() => {
+    if (tab !== "checklist") return;
+    const items = data.checklistItems.filter((c) => c.projectId === projectId);
+    if (items.length === 0) {
+      persist({ ...data, checklistItems: [...data.checklistItems, ...buildDefaultChecklist(projectId)] });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, projectId, data.checklistItems.length]);
+
   if (!project) {
     return (
       <div>
@@ -2472,6 +2509,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
   const milestones = data.milestones.filter((m) => m.projectId === projectId).sort((a, b) => new Date(a.date) - new Date(b.date));
   const crewLineItems = lineItems.filter((l) => l.group === "Nhân sự" && l.personnelId);
   const payments = data.payments.filter((pm) => pm.projectId === projectId).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const checklistItems = data.checklistItems.filter((c) => c.projectId === projectId);
   const transactions = data.transactions.filter((t) => t.projectId === projectId).sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const thu = transactions.filter((t) => t.type === "Thu").reduce((s, t) => s + t.amount, 0);
@@ -2531,6 +2569,23 @@ function ProjectDetail({ data, persist, projectId, back }) {
     setEditingPayment(null);
   };
   const deletePayment = (id) => { persist({ ...data, payments: data.payments.filter((pm) => pm.id !== id) }); setConfirmRemove(null); };
+
+  const patchChecklistItem = (id, patch) => {
+    persist({ ...data, checklistItems: data.checklistItems.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
+  };
+  const addChecklistItem = (category) => {
+    const task = window.prompt(`Tên công việc mới trong "${category}":`, "");
+    if (!task || !task.trim()) return;
+    persist({ ...data, checklistItems: [...data.checklistItems, { id: uid(), projectId, category, task: task.trim(), status: "Chưa làm", detail: "", deadline: "" }] });
+  };
+  const deleteChecklistItem = (id) => { persist({ ...data, checklistItems: data.checklistItems.filter((c) => c.id !== id) }); setConfirmRemove(null); };
+  const addChecklistCategory = () => {
+    const category = window.prompt("Tên hạng mục mới:", "");
+    if (!category || !category.trim()) return;
+    const task = window.prompt(`Đầu việc đầu tiên trong "${category.trim()}":`, "");
+    if (!task || !task.trim()) return;
+    persist({ ...data, checklistItems: [...data.checklistItems, { id: uid(), projectId, category: category.trim(), task: task.trim(), status: "Chưa làm", detail: "", deadline: "" }] });
+  };
 
   const [showExpenseExportMenu, setShowExpenseExportMenu] = useState(false);
   const [acceptancePreview, setAcceptancePreview] = useState(null);
@@ -2781,6 +2836,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
     { id: "overview", label: "Tổng quan", icon: Film },
     { id: "contract", label: "Dòng tiền", icon: Wallet },
     { id: "timeline", label: "Timeline", icon: Calendar },
+    { id: "checklist", label: "Checklist", icon: CheckCircle2 },
     { id: "crew", label: "Nhân sự", icon: Users },
   ];
 
@@ -3176,6 +3232,71 @@ function ProjectDetail({ data, persist, projectId, back }) {
           {showMilestoneForm && <MilestoneForm initial={editingMilestone} onClose={() => { setShowMilestoneForm(false); setEditingMilestone(null); }} onSave={saveMilestone} />}
         </div>
       )}
+
+      {tab === "checklist" && (() => {
+        const grouped = [];
+        const seen = new Set();
+        checklistItems.forEach((c) => {
+          if (seen.has(c.category)) return;
+          seen.add(c.category);
+          grouped.push({ category: c.category, items: checklistItems.filter((x) => x.category === c.category) });
+        });
+        return (
+          <div className="mv-panel">
+            <div className="mv-panel-head">
+              <h3 className="mv-panel-title"><CheckCircle2 size={16} /> Checklist công việc</h3>
+              <button className="mv-btn mv-btn-primary mv-btn-sm" onClick={addChecklistCategory}><Plus size={14} /> Thêm hạng mục mới</button>
+            </div>
+            {grouped.length === 0 && <p className="mv-empty-note">Đang tạo checklist mẫu...</p>}
+            <table className="mv-checklist-table">
+              <thead>
+                <tr>
+                  <th>Hạng mục</th>
+                  <th>Đầu mục công việc</th>
+                  <th>Status</th>
+                  <th>Chi tiết</th>
+                  <th>Deadline</th>
+                  <th></th>
+                </tr>
+              </thead>
+              {grouped.map(({ category, items }) => (
+                <tbody key={category}>
+                  {items.map((c, idx) => (
+                    <tr key={c.id}>
+                      {idx === 0 && <td rowSpan={items.length} className="mv-checklist-category">{category}</td>}
+                      <td>{c.task}</td>
+                      <td>
+                        <select
+                          className="mv-checklist-status-select"
+                          style={{ background: CHECKLIST_STATUS_META[c.status]?.bg, color: CHECKLIST_STATUS_META[c.status]?.fg }}
+                          value={c.status}
+                          onChange={(e) => patchChecklistItem(c.id, { status: e.target.value })}
+                        >
+                          {CHECKLIST_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <input className="mv-checklist-inline-input" value={c.detail} onChange={(e) => patchChecklistItem(c.id, { detail: e.target.value })} placeholder="—" />
+                      </td>
+                      <td>
+                        <input type="date" className="mv-checklist-inline-input" value={c.deadline} onChange={(e) => patchChecklistItem(c.id, { deadline: e.target.value })} />
+                      </td>
+                      <td>
+                        <button className="mv-icon-btn" onClick={() => deleteChecklistItem(c.id)}><Trash2 size={13} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="mv-checklist-add-row">
+                    <td colSpan={6}>
+                      <button className="mv-checklist-add-btn" onClick={() => addChecklistItem(category)}>+ Thêm công việc trong {category}</button>
+                    </td>
+                  </tr>
+                </tbody>
+              ))}
+            </table>
+          </div>
+        );
+      })()}
 
       {tab === "crew" && (
         <div className="mv-panel">
@@ -3836,6 +3957,17 @@ const CSS = `
 .mv-variance-note { display: block; font-size: 10px; color: var(--text-muted); font-weight: 500; }
 
 .mv-quote-table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+
+.mv-checklist-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
+.mv-checklist-table th { text-align: left; padding: 8px 10px; background: var(--surface-2); font-family: 'Oswald', sans-serif; letter-spacing: 0.03em; text-transform: uppercase; font-size: 11.5px; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+.mv-checklist-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.mv-checklist-category { font-weight: 700; font-family: 'Oswald', sans-serif; letter-spacing: 0.02em; text-transform: uppercase; color: var(--gold); vertical-align: top; padding-top: 10px; }
+.mv-checklist-status-select { border: none; border-radius: 12px; padding: 4px 12px; font-size: 11.5px; font-weight: 700; cursor: pointer; appearance: none; -webkit-appearance: none; text-align: center; }
+.mv-checklist-inline-input { background: transparent; border: none; border-bottom: 1px solid transparent; color: var(--text); font-size: 13px; width: 100%; padding: 3px 0; }
+.mv-checklist-inline-input:focus { outline: none; border-bottom-color: var(--gold); }
+.mv-checklist-add-row td { border-bottom: 1px solid var(--border); padding: 4px 10px 10px; }
+.mv-checklist-add-btn { background: none; border: none; color: var(--text-muted); font-size: 12px; cursor: pointer; padding: 2px 0; }
+.mv-checklist-add-btn:hover { color: var(--gold); }
 .mv-quote-table th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); padding: 8px 8px; border-bottom: 1px solid var(--border); }
 .mv-quote-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .mv-quote-group-row td { padding: 10px 8px 4px; font-family: 'Oswald', sans-serif; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gold); border-bottom: 1px solid var(--gold); }
