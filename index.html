@@ -2055,8 +2055,9 @@ function CompanyCalendar({ data, openProject }) {
             const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
             const dayMilestones = milestonesByDay[d] || [];
             const isToday = dateKey === todayKey;
+            const isShooting = dayMilestones.some((m) => m.name === "Shooting");
             return (
-              <div key={i} className={`mv-calendar-cell ${isToday ? "mv-calendar-cell-today" : ""}`}>
+              <div key={i} className={`mv-calendar-cell ${isToday ? "mv-calendar-cell-today" : ""} ${isShooting ? "mv-calendar-cell-shooting" : ""}`}>
                 <div className="mv-calendar-daynum">{d}</div>
                 <div className="mv-calendar-chips">
                   {dayMilestones.map((m) => (
@@ -2632,10 +2633,11 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, onDe
             const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
             const dayMilestones = milestonesByDay[d] || [];
             const isToday = dateKey === todayKey;
+            const isShooting = dayMilestones.some((m) => m.name === "Shooting");
             return (
               <div
                 key={i}
-                className={`mv-calendar-cell ${isToday ? "mv-calendar-cell-today" : ""}`}
+                className={`mv-calendar-cell ${isToday ? "mv-calendar-cell-today" : ""} ${isShooting ? "mv-calendar-cell-shooting" : ""}`}
                 onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = e.dataTransfer.effectAllowed === "move" ? "move" : "copy"; e.currentTarget.classList.add("mv-calendar-cell-dragover"); }}
                 onDragLeave={(e) => { e.currentTarget.classList.remove("mv-calendar-cell-dragover"); }}
                 onDrop={(e) => { e.currentTarget.classList.remove("mv-calendar-cell-dragover"); handleDrop(e, d); }}
@@ -4373,6 +4375,8 @@ const CSS = `
 .mv-calendar-cell { border: 1px solid var(--border); border-radius: 8px; padding: 5px; background: var(--surface-2); overflow: hidden; }
 .mv-calendar-cell-blank { border: none; background: none; }
 .mv-calendar-cell-today { border-color: var(--gold); }
+.mv-calendar-cell-shooting { background: color-mix(in srgb, #C1443C 20%, var(--surface-2)); border-color: #C1443C; }
+.mv-calendar-cell-shooting .mv-calendar-daynum { color: #E8756B; font-weight: 700; }
 .mv-calendar-cell-dragover { border-color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, var(--surface-2)); }
 .mv-calendar-toolbar { display: flex; justify-content: flex-end; margin-bottom: 10px; }
 .mv-print-only { display: none; }
@@ -4485,6 +4489,9 @@ const CSS = `
 
 @media print {
   @page { size: A4 portrait; margin: 14mm; }
+  html, body { height: auto !important; }
+  .mv-app, .mv-shell { min-height: 0 !important; height: auto !important; }
+  .mv-sidebar { position: static !important; height: auto !important; }
   body * { visibility: hidden; }
   #mv-printable-calendar, #mv-printable-calendar *,
   #mv-printable-lineitems, #mv-printable-lineitems *,
@@ -4500,6 +4507,8 @@ const CSS = `
   #mv-printable-calendar .mv-calendar-title, #mv-printable-company-calendar .mv-calendar-title { color: #111; }
   #mv-printable-calendar .mv-calendar-weekday, #mv-printable-company-calendar .mv-calendar-weekday { color: #555; }
   #mv-printable-calendar .mv-calendar-cell, #mv-printable-company-calendar .mv-calendar-cell { border: 1px solid #ccc; background: #fff; break-inside: avoid; }
+  #mv-printable-calendar .mv-calendar-cell-shooting, #mv-printable-company-calendar .mv-calendar-cell-shooting { background: #FDE3E0 !important; border-color: #C1443C !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #mv-printable-calendar .mv-calendar-cell-shooting .mv-calendar-daynum, #mv-printable-company-calendar .mv-calendar-cell-shooting .mv-calendar-daynum { color: #C1443C !important; }
   #mv-printable-calendar .mv-calendar-daynum, #mv-printable-company-calendar .mv-calendar-daynum { color: #555; }
   #mv-printable-calendar .mv-calendar-chip, #mv-printable-company-calendar .mv-calendar-chip { color: #111; border-left-width: 3px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
