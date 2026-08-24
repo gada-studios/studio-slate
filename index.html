@@ -2774,7 +2774,79 @@ function CatalogPanel({ catalog, onPick }) {
   );
 }
 
-function ProjectDetail({ data, persist, projectId, back }) {
+function ProjectEmployeeExpenseTab({ projectId, sync }) {
+  const [rows, setRows] = useState(null);
+  const [loadError, setLoadError] = useState("");
+
+  const load = useCallback(async () => {
+    const client = sync?.getClient();
+    if (!client) return;
+    setLoadError("");
+    try {
+      const { data: expRows, error } = await client.from("expense_reports").select("*").eq("project_id", projectId).order("created_at", { ascending: false });
+      if (error) throw error;
+      setRows(expRows || []);
+    } catch (e) {
+      setLoadError(e.message || "Không tải được danh sách chi phí.");
+      setRows([]);
+    }
+  }, [sync, projectId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="mv-panel">
+      <div className="mv-panel-head">
+        <h3 className="mv-panel-title"><Wallet size={16} /> Chi phí nhân viên báo cho dự án này</h3>
+        <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={load}><RefreshCw size={13} /> Tải lại</button>
+      </div>
+      <p className="mv-row-sub" style={{ marginBottom: 14 }}>
+        Các khoản chi do nhân viên tự báo cáo — <strong>tách biệt hoàn toàn</strong> với bảng dự toán &amp; hạng mục chi phí
+        ở tab Dòng tiền, chỉ để bạn đối chiếu, không tự động ghi đè số liệu nào.
+      </p>
+      {loadError && <p className="mv-drive-script-error">{loadError}</p>}
+      {rows === null && <p className="mv-empty-note">Đang tải...</p>}
+      {rows && rows.length === 0 && <p className="mv-empty-note">Chưa có khoản chi nào được báo cáo cho dự án này.</p>}
+      {rows && rows.length > 0 && (() => {
+        const byCategory = {};
+        rows.forEach((r) => {
+          const key = r.line_item_name || "(không rõ hạng mục)";
+          (byCategory[key] = byCategory[key] || []).push(r);
+        });
+        const total = rows.reduce((s, r) => s + Number(r.amount || 0), 0);
+        return (
+          <>
+            <div className="mv-stats-row mv-stats-row-sm" style={{ gridTemplateColumns: "1fr", marginBottom: 14 }}>
+              <StatCard label="Tổng đã báo" value={fmtVND(total)} tone="#3FA9A0" />
+            </div>
+            {Object.entries(byCategory).map(([catName, catRows]) => {
+              const catTotal = catRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+              return (
+                <div key={catName} style={{ marginBottom: 14 }}>
+                  <div className="mv-row-sub" style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, marginBottom: 4 }}>
+                    <span>{catName}</span>
+                    <span className="mv-mono-money">{fmtVND(catTotal)} ({catRows.length} khoản)</span>
+                  </div>
+                  {catRows.map((r) => (
+                    <div key={r.id} className="mv-row-card">
+                      <div style={{ flex: 1 }}>
+                        <div className="mv-row-sub mv-mono-date">{fmtDate(r.spent_date)} · {r.submitted_by}</div>
+                        {r.note && <div className="mv-row-sub">{r.note}</div>}
+                      </div>
+                      <span className="mv-mono-money">{fmtVND(r.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </>
+        );
+      })()}
+    </div>
+  );
+}
+
+function ProjectDetail({ data, persist, projectId, back, sync }) {
   const project = data.projects.find((p) => p.id === projectId);
   const [tab, setTab] = useState("overview");
   const [timelineView, setTimelineView] = useState("list");
@@ -3153,6 +3225,7 @@ function ProjectDetail({ data, persist, projectId, back }) {
     { id: "checklist", label: "Checklist", icon: CheckCircle2 },
     { id: "crew", label: "Nhân sự", icon: Users },
     { id: "sup", label: "SUP", icon: Building2 },
+    { id: "employee-expense", label: "Chi phí nhân viên", icon: Wallet },
   ];
 
   return (
@@ -3722,6 +3795,8 @@ function ProjectDetail({ data, persist, projectId, back }) {
         </div>
       )}
 
+      {tab === "employee-expense" && <ProjectEmployeeExpenseTab projectId={projectId} sync={sync} />}
+
       {showLineItemForm && (
         <LineItemForm
           initial={editingLineItem}
@@ -3940,6 +4015,7 @@ function EmployeeAccessPage({ data, sync }) {
         status: project.status, progress: project.progress, startDate: project.startDate, endDate: project.endDate,
         milestones: data.milestones.filter((m) => m.projectId === project.id),
         checklistItems: data.checklistItems.filter((c) => c.projectId === project.id),
+        expenseCategories: data.lineItems.filter((l) => l.projectId === project.id).map((l) => ({ id: l.id, name: l.name, group: l.group })),
       };
       await client.from("project_shared").upsert({ project_id: project.id, data: shared, updated_at: new Date().toISOString() }, { onConflict: "project_id" });
       setEmail("");
@@ -3957,6 +4033,35 @@ function EmployeeAccessPage({ data, sync }) {
       load();
     } catch (e) {
       setLoadError(e.message || "Không xoá được.");
+    }
+  };
+
+  const [resyncing, setResyncing] = useState(false);
+  const resyncAll = async () => {
+    const client = sync.getClient();
+    if (!client || !rows) return;
+    setResyncing(true);
+    try {
+      const uniqueProjectIds = Array.from(new Set(rows.map((r) => r.project_id)));
+      const sharedRows = uniqueProjectIds
+        .map((pid) => data.projects.find((p) => p.id === pid))
+        .filter(Boolean)
+        .map((project) => ({
+          project_id: project.id,
+          data: {
+            id: project.id, name: project.name, client: project.client, director: project.director,
+            status: project.status, progress: project.progress, startDate: project.startDate, endDate: project.endDate,
+            milestones: data.milestones.filter((m) => m.projectId === project.id),
+            checklistItems: data.checklistItems.filter((c) => c.projectId === project.id),
+            expenseCategories: data.lineItems.filter((l) => l.projectId === project.id).map((l) => ({ id: l.id, name: l.name, group: l.group })),
+          },
+          updated_at: new Date().toISOString(),
+        }));
+      if (sharedRows.length > 0) await client.from("project_shared").upsert(sharedRows, { onConflict: "project_id" });
+    } catch (e) {
+      setLoadError(e.message || "Không đồng bộ được.");
+    } finally {
+      setResyncing(false);
     }
   };
 
@@ -3984,7 +4089,10 @@ function EmployeeAccessPage({ data, sync }) {
         {loadError && <p className="mv-drive-script-error">{loadError}</p>}
       </div>
 
-      <h3 className="mv-panel-title" style={{ marginBottom: 12 }}>Đang được giao</h3>
+      <div className="mv-panel-head" style={{ marginBottom: 0 }}>
+        <h3 className="mv-panel-title">Đang được giao</h3>
+        <button className="mv-btn mv-btn-ghost mv-btn-sm" disabled={resyncing} onClick={resyncAll}><RefreshCw size={13} /> {resyncing ? "Đang đồng bộ..." : "Đồng bộ lại dữ liệu (Timeline/Checklist/Chi phí)"}</button>
+      </div>
       {rows === null && <p className="mv-empty-note">Đang tải...</p>}
       {rows && rows.length === 0 && <p className="mv-empty-note">Chưa giao dự án cho ai.</p>}
       {rows && rows.map((r) => (
@@ -4570,7 +4678,6 @@ function App() {
     { id: "personnel", label: "Nhân sự", icon: Users },
     { id: "suppliers", label: "Nhà cung cấp", icon: Building2 },
     { id: "employee-access", label: "Phân quyền nhân viên", icon: Shield },
-    { id: "expense-reports", label: "Chi phí nhân viên báo", icon: Wallet },
   ];
 
   if (!sync.user) {
@@ -4663,11 +4770,11 @@ function App() {
             <>
               {view === "dashboard" && <Dashboard data={data} openProject={openProject} />}
               {view === "projects" && <ProjectsList data={data} persist={persist} openProject={openProject} />}
-              {view === "project" && <ProjectDetail data={data} persist={persist} projectId={activeProjectId} back={() => setView("projects")} />}
+              {view === "project" && <ProjectDetail data={data} persist={persist} projectId={activeProjectId} back={() => setView("projects")} sync={sync} />}
               {view === "personnel" && <PersonnelPage data={data} persist={persist} />}
               {view === "suppliers" && <SuppliersPage data={data} persist={persist} />}
               {view === "employee-access" && <EmployeeAccessPage data={data} sync={sync} />}
-              {view === "expense-reports" && <ExpenseReportsPage data={data} sync={sync} />}
+
             </>
           )}
         </main>
@@ -4736,7 +4843,7 @@ const CSS = `
 .mv-shell { display: flex; min-height: 100vh; }
 .mv-employee-shell { max-width: 1100px; margin: 0 auto; padding: 24px; }
 .mv-login-gate { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg); padding: 20px; }
-.mv-login-card { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 32px 28px; }
+.mv-login-card { width: 100%; max-width: 380px; background: var(--surface-2); border: 1px solid var(--gold); border-radius: 14px; padding: 32px 28px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
 .mv-employee-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
 .mv-employee-header-right { display: flex; align-items: center; gap: 12px; }
 .mv-employee-project-list .mv-slate { cursor: pointer; }
