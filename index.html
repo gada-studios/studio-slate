@@ -1089,6 +1089,7 @@ function useSupabaseSync(dataRef, applyRemoteData) {
   }, [fetchRemoteRow, pushToRemote, applyRemoteData, dataRef]);
 
   // Restore an existing session on load, and react to future sign-in/out.
+  const [sessionChecked, setSessionChecked] = useState(false);
   useEffect(() => {
     if (!scriptReady) return;
     const client = clientRef.current;
@@ -1098,6 +1099,7 @@ function useSupabaseSync(dataRef, applyRemoteData) {
         setUser(data.session.user);
         afterLogin(data.session.user);
       }
+      setSessionChecked(true);
     });
     const { data: sub } = client.auth.onAuthStateChange((event, session) => {
       setUser(session ? session.user : null);
@@ -1206,7 +1208,7 @@ function useSupabaseSync(dataRef, applyRemoteData) {
   }, [schedulePush, dataRef]);
 
   return {
-    supabaseUrl, supabaseKey, saveCredentials, scriptReady, scriptError,
+    supabaseUrl, supabaseKey, saveCredentials, scriptReady, scriptError, sessionChecked,
     status, user, lastSyncedAt, errorMsg, conflict,
     signUp, signIn, signOut, resolveConflict, schedulePush, pushProjectShared,
     getClient: () => clientRef.current,
@@ -1332,6 +1334,9 @@ function useAppData() {
           status: p.status, progress: p.progress, startDate: p.startDate, endDate: p.endDate,
           milestones: (next.milestones || []).filter((m) => m.projectId === p.id),
           checklistItems: (next.checklistItems || []).filter((c) => c.projectId === p.id),
+          expenseCategories: (next.lineItems || [])
+            .filter((l) => l.projectId === p.id)
+            .map((l) => ({ id: l.id, name: l.name, group: l.group })),
         },
       }));
       if (pushSharedTimer.current) clearTimeout(pushSharedTimer.current);
@@ -3999,6 +4004,94 @@ function EmployeeAccessPage({ data, sync }) {
   );
 }
 
+function ExpenseReportsPage({ data, sync }) {
+  const [rows, setRows] = useState(null);
+  const [loadError, setLoadError] = useState("");
+  const [projectFilter, setProjectFilter] = useState("all");
+
+  const load = useCallback(async () => {
+    const client = sync.getClient();
+    if (!client) return;
+    setLoadError("");
+    try {
+      const { data: expRows, error } = await client.from("expense_reports").select("*").order("created_at", { ascending: false });
+      if (error) throw error;
+      setRows(expRows || []);
+    } catch (e) {
+      setLoadError(e.message || "Không tải được danh sách chi phí.");
+      setRows([]);
+    }
+  }, [sync]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (rows === null) return <p className="mv-empty-note">Đang tải...</p>;
+
+  const filtered = projectFilter === "all" ? rows : rows.filter((r) => r.project_id === projectFilter);
+  const byProject = {};
+  filtered.forEach((r) => { (byProject[r.project_id] = byProject[r.project_id] || []).push(r); });
+
+  return (
+    <div>
+      <p className="mv-drive-intro" style={{ marginBottom: 18 }}>
+        Các khoản chi do nhân viên tự báo cáo trong quá trình thực hiện dự án — trang này{" "}
+        <strong>tách biệt hoàn toàn</strong> với bảng dự toán &amp; hạng mục chi phí bạn đã thiết lập ở tab Dòng tiền,
+        chỉ để bạn đối chiếu, không tự động ghi đè bất kỳ số liệu nào.
+      </p>
+
+      <div className="mv-form-grid" style={{ marginBottom: 16 }}>
+        <Field label="Lọc theo dự án">
+          <select className="mv-input" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}>
+            <option value="all">Tất cả dự án</option>
+            {data.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      {loadError && <p className="mv-drive-script-error">{loadError}</p>}
+      {Object.keys(byProject).length === 0 && <p className="mv-empty-note">Chưa có khoản chi nào được báo cáo.</p>}
+
+      {Object.entries(byProject).map(([projectId, projectRows]) => {
+        const project = data.projects.find((p) => p.id === projectId);
+        const byCategory = {};
+        projectRows.forEach((r) => {
+          const key = r.line_item_name || "(không rõ hạng mục)";
+          (byCategory[key] = byCategory[key] || []).push(r);
+        });
+        const projectTotal = projectRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+        return (
+          <div key={projectId} className="mv-panel" style={{ marginBottom: 16 }}>
+            <div className="mv-panel-head">
+              <h3 className="mv-panel-title">{project?.name || projectId}</h3>
+              <span className="mv-mono-money" style={{ fontWeight: 700 }}>{fmtVND(projectTotal)}</span>
+            </div>
+            {Object.entries(byCategory).map(([catName, catRows]) => {
+              const catTotal = catRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+              return (
+                <div key={catName} style={{ marginBottom: 14 }}>
+                  <div className="mv-row-sub" style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, marginBottom: 4 }}>
+                    <span>{catName}</span>
+                    <span className="mv-mono-money">{fmtVND(catTotal)} ({catRows.length} khoản)</span>
+                  </div>
+                  {catRows.map((r) => (
+                    <div key={r.id} className="mv-row-card">
+                      <div style={{ flex: 1 }}>
+                        <div className="mv-row-sub mv-mono-date">{fmtDate(r.spent_date)} · {r.submitted_by}</div>
+                        {r.note && <div className="mv-row-sub">{r.note}</div>}
+                      </div>
+                      <span className="mv-mono-money">{fmtVND(r.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ------------------------------ auth settings UI ------------------------------ */
 
 function AuthStatusLine({ status, lastSyncedAt, errorMsg }) {
@@ -4017,6 +4110,40 @@ function AuthStatusLine({ status, lastSyncedAt, errorMsg }) {
     <div className="mv-drive-status" style={{ color: m.color }}>
       <Ic size={13} className={m.spin ? "mv-spin" : ""} />
       <span>{m.text}</span>
+    </div>
+  );
+}
+
+function LoginGate({ sync }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  return (
+    <div className="mv-login-gate">
+      <style>{CSS}</style>
+      <div className="mv-login-card">
+        <img src={LOGO_DATA_URI} alt="Logo công ty" className="mv-brand-logo" style={{ maxWidth: 160, margin: "0 auto 20px", display: "block" }} />
+        <h2 style={{ textAlign: "center", marginBottom: 6 }}>Đăng nhập</h2>
+        <p className="mv-row-sub" style={{ textAlign: "center", marginBottom: 20 }}>Quản lý sản xuất MV — GADA Studios</p>
+        {!sync.scriptReady ? (
+          <p className="mv-drive-intro" style={{ textAlign: "center" }}>Đang kết nối...</p>
+        ) : (
+          <>
+            <Field label="Email"><input type="email" className="mv-input" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+            <Field label="Mật khẩu"><input type="password" className="mv-input" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && email.trim() && password.length >= 6) sync.signIn(email, password); }} /></Field>
+            {sync.errorMsg && <p className="mv-drive-script-error">{sync.errorMsg}</p>}
+            <button
+              className="mv-btn mv-btn-primary"
+              style={{ width: "100%", justifyContent: "center", marginTop: 8 }}
+              disabled={!email.trim() || password.length < 6 || sync.status === "connecting"}
+              onClick={() => sync.signIn(email, password)}
+            >
+              <Cloud size={15} /> Đăng nhập
+            </button>
+            <p className="mv-row-sub" style={{ textAlign: "center", marginTop: 14 }}>Chưa có tài khoản? Liên hệ quản trị viên để được cấp.</p>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -4134,6 +4261,9 @@ function EmployeeApp({ sync }) {
   const [showMilestoneForm, setShowMilestoneForm] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null);
+  const [myExpenses, setMyExpenses] = useState({}); // project_id -> [rows]
+  const [expenseForm, setExpenseForm] = useState({ lineItemId: "", amount: "", date: todayISO(), note: "" });
+  const [expenseSubmitting, setExpenseSubmitting] = useState(false);
 
   const loadAll = useCallback(async () => {
     const client = sync.getClient();
@@ -4150,12 +4280,43 @@ function EmployeeApp({ sync }) {
         const map = {};
         (sharedRows || []).forEach((r) => { map[r.project_id] = r.data; });
         setProjectsData(map);
+
+        const { data: expenseRows, error: e3 } = await client.from("expense_reports").select("*").in("project_id", ids).eq("submitted_by", sync.user.email).order("created_at", { ascending: false });
+        if (e3) throw e3;
+        const expMap = {};
+        (expenseRows || []).forEach((r) => { (expMap[r.project_id] = expMap[r.project_id] || []).push(r); });
+        setMyExpenses(expMap);
       }
     } catch (e) {
       setLoadError(e.message || "Không tải được dữ liệu");
       setAssignments([]);
     }
   }, [sync]);
+
+  const submitExpense = async () => {
+    const client = sync.getClient();
+    if (!client || !activeId || !expenseForm.lineItemId || !expenseForm.amount) return;
+    const category = (projectsData[activeId]?.expenseCategories || []).find((c) => c.id === expenseForm.lineItemId);
+    setExpenseSubmitting(true);
+    try {
+      const { error } = await client.from("expense_reports").insert({
+        project_id: activeId,
+        line_item_id: expenseForm.lineItemId,
+        line_item_name: category?.name || "",
+        amount: Number(expenseForm.amount) || 0,
+        spent_date: expenseForm.date || null,
+        note: expenseForm.note,
+        submitted_by: sync.user.email,
+      });
+      if (error) throw error;
+      setExpenseForm({ lineItemId: "", amount: "", date: todayISO(), note: "" });
+      loadAll();
+    } catch (e) {
+      setLoadError(e.message || "Không gửi được khoản chi.");
+    } finally {
+      setExpenseSubmitting(false);
+    }
+  };
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -4227,6 +4388,7 @@ function EmployeeApp({ sync }) {
             <div className="mv-tabs">
               <button className={`mv-tab ${tab === "timeline" ? "mv-tab-active" : ""}`} onClick={() => setTab("timeline")}><Calendar size={15} /> Timeline</button>
               <button className={`mv-tab ${tab === "checklist" ? "mv-tab-active" : ""}`} onClick={() => setTab("checklist")}><CheckCircle2 size={15} /> Checklist</button>
+              <button className={`mv-tab ${tab === "expense" ? "mv-tab-active" : ""}`} onClick={() => setTab("expense")}><Wallet size={15} /> Chi phí đã chi</button>
             </div>
 
             {tab === "timeline" && (
@@ -4305,6 +4467,60 @@ function EmployeeApp({ sync }) {
                 </div>
               );
             })()}
+
+            {tab === "expense" && (() => {
+              const categories = active.expenseCategories || [];
+              const grouped = [];
+              const seenG = new Set();
+              categories.forEach((c) => {
+                if (seenG.has(c.group)) return;
+                seenG.add(c.group);
+                grouped.push({ group: c.group, items: categories.filter((x) => x.group === c.group) });
+              });
+              const myList = myExpenses[activeId] || [];
+              return (
+                <div className="mv-panel">
+                  <h3 className="mv-panel-title" style={{ marginBottom: 12 }}><Plus size={16} /> Báo khoản chi mới</h3>
+                  {categories.length === 0 ? (
+                    <p className="mv-empty-note">Chưa có hạng mục nào trong dự án này để báo chi.</p>
+                  ) : (
+                    <>
+                      <div className="mv-form-grid">
+                        <Field label="Hạng mục">
+                          <select className="mv-input" value={expenseForm.lineItemId} onChange={(e) => setExpenseForm({ ...expenseForm, lineItemId: e.target.value })}>
+                            <option value="">— Chọn hạng mục —</option>
+                            {grouped.map(({ group, items: gi }) => (
+                              <optgroup key={group} label={group}>
+                                {gi.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </optgroup>
+                            ))}
+                          </select>
+                        </Field>
+                        <Field label="Số tiền đã chi (VND)"><input type="number" className="mv-input" value={expenseForm.amount} onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value })} /></Field>
+                        <Field label="Ngày chi"><input type="date" className="mv-input" value={expenseForm.date} onChange={(e) => setExpenseForm({ ...expenseForm, date: e.target.value })} /></Field>
+                      </div>
+                      <Field label="Ghi chú"><input className="mv-input" value={expenseForm.note} onChange={(e) => setExpenseForm({ ...expenseForm, note: e.target.value })} placeholder="VD: đợt 2, mua thêm phụ kiện..." /></Field>
+                      <button className="mv-btn mv-btn-primary mv-btn-sm" disabled={!expenseForm.lineItemId || !expenseForm.amount || expenseSubmitting} onClick={submitExpense}>
+                        {expenseSubmitting ? "Đang gửi..." : "Gửi khoản chi"}
+                      </button>
+                    </>
+                  )}
+
+                  <div className="mv-drive-divider" />
+                  <h3 className="mv-panel-title" style={{ marginBottom: 12 }}>Các khoản đã báo</h3>
+                  {myList.length === 0 && <p className="mv-empty-note">Bạn chưa báo khoản chi nào cho dự án này.</p>}
+                  {myList.map((r) => (
+                    <div key={r.id} className="mv-row-card">
+                      <div style={{ flex: 1 }}>
+                        <div className="mv-row-title">{r.line_item_name} — {fmtVND(r.amount)}</div>
+                        <div className="mv-row-sub mv-mono-date">{fmtDate(r.spent_date)}</div>
+                        {r.note && <div className="mv-row-sub">{r.note}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
@@ -4354,9 +4570,17 @@ function App() {
     { id: "personnel", label: "Nhân sự", icon: Users },
     { id: "suppliers", label: "Nhà cung cấp", icon: Building2 },
     { id: "employee-access", label: "Phân quyền nhân viên", icon: Shield },
+    { id: "expense-reports", label: "Chi phí nhân viên báo", icon: Wallet },
   ];
 
-  if (sync.user && sync.user.id !== OWNER_USER_ID) {
+  if (!sync.user) {
+    if (!sync.sessionChecked) {
+      return <div className="mv-loading"><Loader2 className="mv-spin" size={22} /> Đang tải...</div>;
+    }
+    return <LoginGate sync={sync} />;
+  }
+
+  if (sync.user.id !== OWNER_USER_ID) {
     return <EmployeeApp sync={sync} />;
   }
 
@@ -4386,10 +4610,13 @@ function App() {
           <div className="mv-sidebar-footer">
             {saveError && <div className="mv-save-error">Lưu dữ liệu thất bại. Thay đổi có thể chưa được lưu.</div>}
 
-            <button className="mv-drive-trigger" onClick={() => setShowDriveModal(true)}>
-              <AuthStatusLine status={sync.status} lastSyncedAt={sync.lastSyncedAt} errorMsg={sync.errorMsg} />
-              <Settings size={13} />
-            </button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button className="mv-drive-trigger" onClick={() => setShowDriveModal(true)} style={{ flex: 1 }}>
+                <AuthStatusLine status={sync.status} lastSyncedAt={sync.lastSyncedAt} errorMsg={sync.errorMsg} />
+                <Settings size={13} />
+              </button>
+              <button className="mv-icon-btn" title="Đăng xuất" onClick={sync.signOut}><Unlink size={14} /></button>
+            </div>
 
             <div className="mv-backup-actions">
               <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={handleDownloadBackup}>
@@ -4440,6 +4667,7 @@ function App() {
               {view === "personnel" && <PersonnelPage data={data} persist={persist} />}
               {view === "suppliers" && <SuppliersPage data={data} persist={persist} />}
               {view === "employee-access" && <EmployeeAccessPage data={data} sync={sync} />}
+              {view === "expense-reports" && <ExpenseReportsPage data={data} sync={sync} />}
             </>
           )}
         </main>
@@ -4507,6 +4735,8 @@ const CSS = `
 .mv-app * { box-sizing: border-box; }
 .mv-shell { display: flex; min-height: 100vh; }
 .mv-employee-shell { max-width: 1100px; margin: 0 auto; padding: 24px; }
+.mv-login-gate { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg); padding: 20px; }
+.mv-login-card { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 32px 28px; }
 .mv-employee-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
 .mv-employee-header-right { display: flex; align-items: center; gap: 12px; }
 .mv-employee-project-list .mv-slate { cursor: pointer; }
