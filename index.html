@@ -2934,6 +2934,16 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
   const [showMilestoneForm, setShowMilestoneForm] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null);
+  const [expenseReports, setExpenseReports] = useState([]);
+
+  useEffect(() => {
+    const client = sync?.getClient();
+    if (!client) return;
+    client.from("expense_reports").select("*").eq("project_id", projectId)
+      .then(({ data: expRows, error }) => {
+        if (!error) setExpenseReports(expRows || []);
+      });
+  }, [sync, projectId]);
 
   useEffect(() => {
     if (tab !== "checklist") return;
@@ -2964,8 +2974,18 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
 
   const thu = transactions.filter((t) => t.type === "Thu").reduce((s, t) => s + t.amount, 0);
   const chi = transactions.filter((t) => t.type === "Chi").reduce((s, t) => s + t.amount, 0);
-  const lineItemsActual = lineItems.reduce((s, l) => s + l.actualValue, 0);
-  const lineItemsDebt = lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0);
+  const getLineItemActual = (l) => {
+    const matched = expenseReports.filter((r) => r.line_item_id === l.id);
+    if (matched.length > 0) return matched.reduce((s, r) => s + Number(r.amount || 0), 0);
+    return l.actualValue || 0;
+  };
+  const customMiscExpenses = expenseReports.filter((r) => r.line_item_id && r.line_item_id.startsWith("misc-"));
+  const customMiscTotal = customMiscExpenses.reduce((s, r) => s + Number(r.amount || 0), 0);
+
+  const lineItemsDuChi = lineItems.reduce((s, l) => s + (l.actualValue || 0), 0);
+  const lineItemsThucChi = lineItems.reduce((s, l) => s + getLineItemActual(l), 0) + customMiscTotal;
+  const lineItemsActual = lineItemsThucChi;
+  const lineItemsDebt = lineItems.reduce((s, l) => s + (getLineItemActual(l) - (l.paidAmount || 0)), 0) + customMiscTotal;
   const lineItemsSubtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
   const lineItemsExtraTotal = lineItems.reduce((s, l) => s + (l.extraAmount || 0), 0);
   const includeVat = project.includeVat !== false; // default true, matches prior behavior
@@ -3575,10 +3595,10 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
             return (
               <>
               <div className="mv-stats-row mv-stats-row-sm mv-no-print">
-                <StatCard label="Thực chi" value={fmtVND(lineItems.reduce((s, l) => s + l.actualValue, 0))} tone="#D4A537" />
-                <StatCard label="Phát sinh" value={fmtVND(lineItemsExtraTotal)} tone={lineItemsExtraTotal > 0 ? "#C1443C" : undefined} />
-                <StatCard label="Đã thanh toán" value={fmtVND(lineItems.reduce((s, l) => s + (l.paidAmount || 0), 0))} tone="#5FB77E" />
-                <StatCard label="Còn nợ" value={fmtVND(lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0))} tone="#C1443C" />
+                <StatCard label="Dự chi" value={fmtVND(lineItemsDuChi)} tone="#3FA9A0" />
+                <StatCard label="Thực chi" value={fmtVND(lineItemsThucChi)} tone="#D4A537" />
+                <StatCard label="Theo hợp đồng" value={fmtVND(lineItemsSubtotal)} tone="#5FB77E" />
+                <StatCard label="Còn nợ (Công ty nợ)" value={fmtVND(lineItemsDebt)} tone="#C1443C" />
               </div>
 
               <table className="mv-quote-table">
@@ -3587,7 +3607,8 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
                     <th>Hạng mục</th>
                     <th>SL</th>
                     <th>Đơn giá</th>
-                    <th className="mv-no-print">Phát sinh</th>
+                    <th className="mv-no-print">Theo hợp đồng</th>
+                    <th className="mv-no-print">Dự chi</th>
                     <th className="mv-no-print">Thực chi</th>
                     <th className="mv-no-print">Đã TT</th>
                     <th className="mv-no-print">Còn nợ</th>
@@ -3597,53 +3618,74 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
                 {grouped.map(({ group, items }) => (
                   <tbody key={group}>
                     <tr className="mv-quote-group-row">
-                      <td colSpan={8}>{group}</td>
+                      <td colSpan={9}>{group}</td>
                     </tr>
                     {items.map((l) => {
-                      const debt = l.actualValue - (l.paidAmount || 0);
+                      const actual = getLineItemActual(l);
+                      const debt = actual - (l.paidAmount || 0);
                       return confirmRemove === l.id ? (
-                        <tr key={l.id}><td colSpan={8}><ConfirmBar text={`Xoá hạng mục "${l.name}"?`} onConfirm={() => deleteLineItem(l.id)} onCancel={() => setConfirmRemove(null)} /></td></tr>
+                        <tr key={l.id}><td colSpan={9}><ConfirmBar text={`Xoá hạng mục "${l.name}"?`} onConfirm={() => deleteLineItem(l.id)} onCancel={() => setConfirmRemove(null)} /></td></tr>
                       ) : (
                         <tr key={l.id} className="mv-quote-row-clickable" onClick={() => { setEditingLineItem(l); setShowLineItemForm(true); }}>
                           <td>{l.name}{l.notes && <div className="mv-row-sub">{l.notes}</div>}</td>
                           <td className="mv-mono-date">{l.quantity || 1}</td>
                           <td className="mv-mono-money">{fmtVND(l.unitPrice || 0)}</td>
-                          <td className="mv-mono-money mv-no-print" style={{ color: (l.extraAmount || 0) > 0 ? "#C1443C" : undefined }}>{fmtVND(l.extraAmount || 0)}</td>
-                          <td className="mv-mono-money mv-no-print">{fmtVND(l.actualValue)}</td>
+                          <td className="mv-mono-money mv-no-print" style={{ color: "#5FB77E" }}>{fmtVND(l.contractValue || 0)}</td>
+                          <td className="mv-mono-money mv-no-print" style={{ color: "#3FA9A0" }}>{fmtVND(l.actualValue || 0)}</td>
+                          <td className="mv-mono-money mv-no-print" style={{ color: "#D4A537" }}>{fmtVND(actual)}</td>
                           <td className="mv-mono-money mv-no-print" style={{ color: "#5FB77E" }}>{fmtVND(l.paidAmount || 0)}</td>
                           <td className="mv-no-print">
-                            {debt > 0 ? <span className="mv-debt-badge">{fmtVND(debt)}</span> : <span className="mv-paid-badge">Đã trả đủ</span>}
+                            {debt > 0 ? <span className="mv-debt-badge">{fmtVND(debt)}</span> : ((l.paidAmount || 0) > 0 && debt <= 0) ? <span className="mv-paid-badge">Đã trả đủ</span> : "0"}
                           </td>
                           <td className="mv-no-print" onClick={(e) => e.stopPropagation()}>
                             <button className="mv-icon-btn" onClick={() => { setEditingLineItem(l); setShowLineItemForm(true); }}><Pencil size={14} /></button>
                             <button className="mv-icon-btn" onClick={() => setConfirmRemove(l.id)}><Trash2 size={14} /></button>
-                            {debt > 0 && <button className="mv-icon-btn" title="Đánh dấu đã trả đủ" onClick={() => markLineItemPaid(l.id, l.actualValue)}><CheckCircle2 size={14} /></button>}
+                            {debt > 0 && <button className="mv-icon-btn" title="Đánh dấu đã trả đủ" onClick={() => markLineItemPaid(l.id, actual)}><CheckCircle2 size={14} /></button>}
                           </td>
                         </tr>
                       );
                     })}
                   </tbody>
                 ))}
+                {customMiscExpenses.length > 0 && (
+                  <tbody>
+                    <tr className="mv-quote-group-row"><td colSpan={9}>Khác / Miscellaneous (Nhân viên nhập)</td></tr>
+                    {customMiscExpenses.map((r) => (
+                      <tr key={r.id}>
+                        <td>{r.line_item_name}</td>
+                        <td className="mv-mono-date">1</td>
+                        <td className="mv-mono-money">0</td>
+                        <td className="mv-mono-money mv-no-print" style={{ color: "#5FB77E" }}>0</td>
+                        <td className="mv-mono-money mv-no-print" style={{ color: "#3FA9A0" }}>0</td>
+                        <td className="mv-mono-money mv-no-print" style={{ color: "#D4A537" }}>{fmtVND(r.amount)}</td>
+                        <td className="mv-mono-money mv-no-print" style={{ color: "#5FB77E" }}>0</td>
+                        <td className="mv-no-print"><span className="mv-debt-badge">{fmtVND(r.amount)}</span></td>
+                        <td className="mv-no-print"></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                )}
                 <tbody className="mv-quote-totals-body">
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label">Tổng theo đơn giá</td>
                     <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(lineItemsSubtotal)}</td>
-                    <td colSpan={4} className="mv-no-print"></td>
+                    <td colSpan={5} className="mv-no-print"></td>
                   </tr>
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label">Tổng phát sinh (báo khách)</td>
                     <td className="mv-quote-amount-cell mv-mono-money" style={{ color: lineItemsExtraTotal > 0 ? "#C1443C" : undefined }}>{fmtVND(lineItemsExtraTotal)}</td>
-                    <td colSpan={4} className="mv-no-print"></td>
+                    <td colSpan={5} className="mv-no-print"></td>
                   </tr>
                   <tr className="mv-no-print">
-                    <td colSpan={4} className="mv-quote-total-label">Tổng thực chi (nội bộ)</td>
-                    <td className="mv-mono-money" style={{ fontWeight: 700 }}>{fmtVND(lineItems.reduce((s, l) => s + l.actualValue, 0))}</td>
+                    <td colSpan={4} className="mv-quote-total-label">Tổng nội bộ (Dự chi / Thực chi)</td>
+                    <td className="mv-mono-money" style={{ fontWeight: 700, color: "#3FA9A0" }}>{fmtVND(lineItemsDuChi)}</td>
+                    <td className="mv-mono-money" style={{ fontWeight: 700, color: "#D4A537" }}>{fmtVND(lineItemsThucChi)}</td>
                     <td colSpan={3}></td>
                   </tr>
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label">Tổng báo khách (chưa VAT)</td>
                     <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(billableTotal)}</td>
-                    <td colSpan={4} className="mv-no-print"></td>
+                    <td colSpan={5} className="mv-no-print"></td>
                   </tr>
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label mv-no-print">
@@ -3654,12 +3696,12 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
                     </td>
                     <td colSpan={3} className="mv-quote-total-label mv-print-only">Thuế VAT (8%)</td>
                     <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(vatAmount)}</td>
-                    <td colSpan={4} className="mv-no-print"></td>
+                    <td colSpan={5} className="mv-no-print"></td>
                   </tr>
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label">{includeVat ? "TỔNG SAU VAT" : "TỔNG CỘNG (không VAT)"}</td>
                     <td className="mv-quote-amount-cell mv-mono-money mv-quote-total-value">{fmtVND(clientTotal)}</td>
-                    <td colSpan={4} className="mv-no-print"></td>
+                    <td colSpan={5} className="mv-no-print"></td>
                   </tr>
                 </tbody>
               </table>
@@ -4453,7 +4495,7 @@ function EmployeeApp({ sync }) {
   const [editingMilestone, setEditingMilestone] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null);
   const [myExpenses, setMyExpenses] = useState({}); // project_id -> [rows]
-  const [expenseForm, setExpenseForm] = useState({ lineItemId: "", amount: "", date: todayISO(), note: "" });
+  const [expenseForm, setExpenseForm] = useState({ lineItemId: "", customName: "", amount: "", date: todayISO(), note: "" });
   const [expenseSubmitting, setExpenseSubmitting] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [confirmDeleteExpense, setConfirmDeleteExpense] = useState(null);
@@ -4522,13 +4564,18 @@ function EmployeeApp({ sync }) {
   const submitExpense = async () => {
     const client = sync.getClient();
     if (!client || !activeId || !expenseForm.lineItemId || !expenseForm.amount) return;
+    const isCustom = expenseForm.lineItemId === "custom_misc";
+    if (isCustom && (!expenseForm.customName || !expenseForm.customName.trim())) {
+      alert("Vui lòng nhập tên hạng mục mới.");
+      return;
+    }
     const category = (liveCategories[activeId] || []).find((c) => c.id === expenseForm.lineItemId);
     setExpenseSubmitting(true);
     try {
       if (editingExpenseId) {
         const { error } = await client.from("expense_reports").update({
-          line_item_id: expenseForm.lineItemId,
-          line_item_name: category?.name || "",
+          line_item_id: isCustom ? `misc-${uid()}` : expenseForm.lineItemId,
+          line_item_name: isCustom ? expenseForm.customName.trim() : (category?.name || ""),
           amount: Number(expenseForm.amount) || 0,
           spent_date: expenseForm.date || null,
           note: expenseForm.note,
@@ -4538,8 +4585,8 @@ function EmployeeApp({ sync }) {
       } else {
         const { error } = await client.from("expense_reports").insert({
           project_id: activeId,
-          line_item_id: expenseForm.lineItemId,
-          line_item_name: category?.name || "",
+          line_item_id: isCustom ? `misc-${uid()}` : expenseForm.lineItemId,
+          line_item_name: isCustom ? expenseForm.customName.trim() : (category?.name || ""),
           amount: Number(expenseForm.amount) || 0,
           spent_date: expenseForm.date || null,
           note: expenseForm.note,
@@ -4547,7 +4594,7 @@ function EmployeeApp({ sync }) {
         });
         if (error) throw error;
       }
-      setExpenseForm({ lineItemId: "", amount: "", date: todayISO(), note: "" });
+      setExpenseForm({ lineItemId: "", customName: "", amount: "", date: todayISO(), note: "" });
       loadAll();
     } catch (e) {
       setLoadError(e.message || "Không gửi được khoản chi.");
@@ -4731,8 +4778,14 @@ function EmployeeApp({ sync }) {
                                 {gi.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                               </optgroup>
                             ))}
+                            <optgroup label="Khác">
+                              <option value="custom_misc">— Thêm hạng mục mới (Miscellaneous) —</option>
+                            </optgroup>
                           </select>
                         </Field>
+                        {expenseForm.lineItemId === "custom_misc" && (
+                          <Field label="Tên hạng mục mới"><input className="mv-input" value={expenseForm.customName || ""} onChange={(e) => setExpenseForm({ ...expenseForm, customName: e.target.value })} placeholder="VD: Mua thêm thẻ nhớ..." /></Field>
+                        )}
                         <Field label="Số tiền đã chi (VND)"><input type="number" className="mv-input" value={expenseForm.amount} onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value })} /></Field>
                         <Field label="Ngày chi"><input type="date" className="mv-input" value={expenseForm.date} onChange={(e) => setExpenseForm({ ...expenseForm, date: e.target.value })} /></Field>
                       </div>
@@ -4742,7 +4795,7 @@ function EmployeeApp({ sync }) {
                           {expenseSubmitting ? "Đang lưu..." : editingExpenseId ? "Lưu thay đổi" : "Gửi khoản chi"}
                         </button>
                         {editingExpenseId && (
-                          <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => { setEditingExpenseId(null); setExpenseForm({ lineItemId: "", amount: "", date: todayISO(), note: "" }); }}>Huỷ sửa</button>
+                          <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => { setEditingExpenseId(null); setExpenseForm({ lineItemId: "", customName: "", amount: "", date: todayISO(), note: "" }); }}>Huỷ sửa</button>
                         )}
                       </div>
                     </>
@@ -5225,7 +5278,7 @@ const CSS = `
 .mv-calendar-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 4px; }
 .mv-calendar-weekday { text-align: center; font-size: 11px; color: var(--text-muted); font-weight: 600; padding: 4px 0; }
 .mv-calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: minmax(72px, auto); gap: 4px; }
-.mv-month-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.mv-month-grid-3 { display: grid; grid-template-columns: 1fr; gap: 18px; }
 .mv-month-block .mv-calendar-grid { grid-auto-rows: minmax(52px, auto); }
 .mv-month-block .mv-calendar-chip { font-size: 9.5px; padding: 1px 4px; }
 @media (max-width: 1100px) { .mv-month-grid-3 { grid-template-columns: 1fr; } }
