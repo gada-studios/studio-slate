@@ -3606,6 +3606,7 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
                     <th>Hạng mục</th>
                     <th>SL</th>
                     <th>Đơn giá</th>
+                    <th>Thành tiền</th>
                     <th className="mv-no-print">Phát sinh</th>
                     <th className="mv-no-print">Dự chi</th>
                     <th className="mv-no-print">Thực chi</th>
@@ -3617,19 +3618,20 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
                 {grouped.map(({ group, items }) => (
                   <tbody key={group}>
                     <tr className="mv-quote-group-row">
-                      <td colSpan={9}>{group}</td>
+                      <td colSpan={10}>{group}</td>
                     </tr>
                     {items.map((l) => {
                       const debt = l.actualValue - (l.paidAmount || 0);
                       const tc = thucChi(l);
                       const hasReport = employeeActualByLineItem[l.id] !== undefined;
                       return confirmRemove === l.id ? (
-                        <tr key={l.id}><td colSpan={9}><ConfirmBar text={`Xoá hạng mục "${l.name}"?`} onConfirm={() => deleteLineItem(l.id)} onCancel={() => setConfirmRemove(null)} /></td></tr>
+                        <tr key={l.id}><td colSpan={10}><ConfirmBar text={`Xoá hạng mục "${l.name}"?`} onConfirm={() => deleteLineItem(l.id)} onCancel={() => setConfirmRemove(null)} /></td></tr>
                       ) : (
                         <tr key={l.id} className="mv-quote-row-clickable" onClick={() => { setEditingLineItem(l); setShowLineItemForm(true); }}>
                           <td>{l.name}{l.notes && <div className="mv-row-sub">{l.notes}</div>}</td>
                           <td className="mv-mono-date">{l.quantity || 1}</td>
                           <td className="mv-mono-money">{fmtVND(l.unitPrice || 0)}</td>
+                          <td className="mv-mono-money" style={{ fontWeight: 600 }}>{fmtVND(l.contractValue)}</td>
                           <td className="mv-mono-money mv-no-print" style={{ color: (l.extraAmount || 0) > 0 ? "#C1443C" : undefined }}>{fmtVND(l.extraAmount || 0)}</td>
                           <td className="mv-mono-money mv-no-print">{fmtVND(l.actualValue)}</td>
                           <td className="mv-mono-money mv-no-print" style={{ color: hasReport ? "#3FA9A0" : "var(--text-muted)" }} title={hasReport ? "Nhân viên đã báo cáo" : "Chưa có nhân viên báo cáo — lấy theo Dự chi"}>{fmtVND(tc)}</td>
@@ -3651,27 +3653,27 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label">Tổng theo đơn giá</td>
                     <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(lineItemsSubtotal)}</td>
-                    <td colSpan={5} className="mv-no-print"></td>
+                    <td colSpan={6} className="mv-no-print"></td>
                   </tr>
                   <tr className="mv-no-print">
                     <td colSpan={3} className="mv-quote-total-label">Tổng phát sinh (báo khách)</td>
                     <td className="mv-quote-amount-cell mv-mono-money" style={{ color: lineItemsExtraTotal > 0 ? "#C1443C" : undefined }}>{fmtVND(lineItemsExtraTotal)}</td>
-                    <td colSpan={5} className="mv-no-print"></td>
+                    <td colSpan={6} className="mv-no-print"></td>
                   </tr>
                   <tr className="mv-no-print">
                     <td colSpan={5} className="mv-quote-total-label">Tổng dự chi (nội bộ)</td>
                     <td className="mv-mono-money" style={{ fontWeight: 700, color: "#D4A537" }}>{fmtVND(lineItems.reduce((s, l) => s + l.actualValue, 0))}</td>
-                    <td colSpan={3}></td>
+                    <td colSpan={4}></td>
                   </tr>
                   <tr className="mv-no-print">
                     <td colSpan={5} className="mv-quote-total-label">Tổng thực chi (nội bộ)</td>
                     <td className="mv-mono-money" style={{ fontWeight: 700, color: "#3FA9A0" }}>{fmtVND(lineItemsThucChiTotal)}</td>
-                    <td colSpan={3}></td>
+                    <td colSpan={4}></td>
                   </tr>
                   <tr className="mv-no-print">
                     <td colSpan={3} className="mv-quote-total-label">Tổng báo khách (chưa VAT)</td>
                     <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(billableTotal)}</td>
-                    <td colSpan={5} className="mv-no-print"></td>
+                    <td colSpan={6} className="mv-no-print"></td>
                   </tr>
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label mv-no-print">
@@ -3682,12 +3684,12 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
                     </td>
                     <td colSpan={3} className="mv-quote-total-label mv-print-only">Thuế VAT (8%)</td>
                     <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(vatAmount)}</td>
-                    <td colSpan={5} className="mv-no-print"></td>
+                    <td colSpan={6} className="mv-no-print"></td>
                   </tr>
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label">{includeVat ? "TỔNG SAU VAT" : "TỔNG CỘNG (không VAT)"}</td>
                     <td className="mv-quote-amount-cell mv-mono-money mv-quote-total-value">{fmtVND(clientTotal)}</td>
-                    <td colSpan={5} className="mv-no-print"></td>
+                    <td colSpan={6} className="mv-no-print"></td>
                   </tr>
                 </tbody>
               </table>
@@ -5266,10 +5268,8 @@ const CSS = `
 .mv-calendar-weekday { text-align: center; font-size: 11px; color: var(--text-muted); font-weight: 600; padding: 4px 0; }
 .mv-calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: minmax(72px, auto); gap: 4px; }
 .mv-month-grid-3 { display: grid; grid-template-columns: 1fr; gap: 24px; }
-.mv-month-grid-3 .mv-calendar-grid { grid-auto-rows: minmax(88px, auto); }
-.mv-month-grid-3 .mv-calendar-chip { font-size: 11px; padding: 3px 6px; }
-.mv-month-block .mv-calendar-grid { grid-auto-rows: minmax(52px, auto); }
-.mv-month-block .mv-calendar-chip { font-size: 9.5px; padding: 1px 4px; }
+.mv-month-grid-3 .mv-calendar-grid { grid-auto-rows: minmax(96px, auto); }
+.mv-month-block .mv-calendar-chip { font-size: 10.5px; padding: 2px 5px; }
 @media (max-width: 1100px) { .mv-month-grid-3 { grid-template-columns: 1fr; } }
 .mv-print-month-page { margin-bottom: 20px; }
 .mv-calendar-cell { border: 1px solid var(--border); border-radius: 8px; padding: 5px; background: var(--surface-2); overflow: hidden; }
@@ -5288,8 +5288,8 @@ const CSS = `
 .mv-calendar-chip {
   display: block; width: 100%; text-align: left; background: color-mix(in srgb, var(--chip-color) 20%, transparent);
   color: var(--text); border: none; border-left: 3px solid var(--chip-color); border-radius: 3px;
-  font-size: 10.5px; padding: 2px 5px; cursor: grab; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; font-family: inherit;
+  font-size: 10px; line-height: 1.25; padding: 2px 5px; cursor: grab; overflow-wrap: break-word;
+  white-space: normal; font-family: inherit;
 }
 .mv-calendar-chip:active { cursor: grabbing; }
 .mv-calendar-chip-wrap { position: relative; }
@@ -5466,9 +5466,13 @@ const CSS = `
   #mv-printable-calendar .mv-calendar-chip, #mv-printable-company-calendar .mv-calendar-chip { color: #111; background: #F0EDE4; border-left-width: 3px; border-radius: 3px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
   #mv-printable-lineitems { padding: 8mm; }
-  #mv-printable-lineitems .mv-quote-table { border-collapse: collapse; }
-  #mv-printable-lineitems .mv-quote-table th { color: #333; border: 1px solid #999; background: #E8E4DA; padding: 6px 8px; }
-  #mv-printable-lineitems .mv-quote-table td { border: 1px solid #ccc; color: #111; padding: 6px 8px; }
+  #mv-printable-lineitems .mv-quote-table { border-collapse: collapse; table-layout: fixed; width: 100%; }
+  #mv-printable-lineitems .mv-quote-table th:nth-child(1), #mv-printable-lineitems .mv-quote-table td:nth-child(1) { width: 40%; }
+  #mv-printable-lineitems .mv-quote-table th:nth-child(2), #mv-printable-lineitems .mv-quote-table td:nth-child(2) { width: 10%; text-align: center; }
+  #mv-printable-lineitems .mv-quote-table th:nth-child(3), #mv-printable-lineitems .mv-quote-table td:nth-child(3) { width: 25%; }
+  #mv-printable-lineitems .mv-quote-table th:nth-child(4), #mv-printable-lineitems .mv-quote-table td:nth-child(4) { width: 25%; }
+  #mv-printable-lineitems .mv-quote-table th { color: #333; border: 1px solid #999; background: #E8E4DA; padding: 7px 9px; }
+  #mv-printable-lineitems .mv-quote-table td { border: 1px solid #ccc; color: #111; padding: 7px 9px; }
   #mv-printable-lineitems .mv-quote-table tbody:nth-of-type(even) tr:not(.mv-quote-group-row) { background: #F4F2EC; }
   #mv-printable-lineitems .mv-quote-total-label { color: #111; }
   #mv-printable-lineitems .mv-quote-group-row td { color: #111; border-bottom: 1px solid #111; }
