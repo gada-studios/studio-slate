@@ -3887,7 +3887,6 @@ function AuthStatusLine({ status, lastSyncedAt, errorMsg }) {
 }
 
 function AuthSettingsModal({ sync, onClose }) {
-  const [mode, setMode] = useState("signin"); // signin | signup
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -3917,23 +3916,20 @@ function AuthSettingsModal({ sync, onClose }) {
         </>
       ) : (
         <>
-          <p className="mv-drive-intro">Đăng nhập bằng email/mật khẩu — dùng được trên mọi thiết bị, không cần cài đặt gì thêm.</p>
-          <div className="mv-view-toggle" style={{ marginBottom: 14 }}>
-            <button className={mode === "signin" ? "mv-view-toggle-active" : ""} onClick={() => setMode("signin")}>Đăng nhập</button>
-            <button className={mode === "signup" ? "mv-view-toggle-active" : ""} onClick={() => setMode("signup")}>Đăng ký</button>
-          </div>
+          <p className="mv-drive-intro">Đăng nhập bằng email/mật khẩu công ty đã cấp cho bạn.</p>
           <Field label="Email"><input type="email" className="mv-input" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-          <Field label="Mật khẩu"><input type="password" className="mv-input" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={mode === "signup" ? "Tối thiểu 6 ký tự" : ""} /></Field>
+          <Field label="Mật khẩu"><input type="password" className="mv-input" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
           {sync.errorMsg && <p className="mv-drive-script-error">{sync.errorMsg}</p>}
           <div className="mv-modal-actions" style={{ justifyContent: "flex-start", marginTop: 14 }}>
             <button
               className="mv-btn mv-btn-primary"
               disabled={!email.trim() || password.length < 6 || sync.status === "connecting"}
-              onClick={() => (mode === "signup" ? sync.signUp(email, password) : sync.signIn(email, password))}
+              onClick={() => sync.signIn(email, password)}
             >
-              <Cloud size={15} /> {mode === "signup" ? "Đăng ký" : "Đăng nhập"}
+              <Cloud size={15} /> Đăng nhập
             </button>
           </div>
+          <p className="mv-row-sub" style={{ marginTop: 10 }}>Chưa có tài khoản? Liên hệ quản trị viên để được cấp.</p>
 
           <div className="mv-drive-divider" />
           <button className="mv-reset-link" onClick={() => setShowAdvanced((v) => !v)}>{showAdvanced ? "Ẩn cài đặt nâng cao" : "Cài đặt nâng cao (đổi máy chủ)"}</button>
