@@ -4229,26 +4229,30 @@ function LoginGate({ sync }) {
   return (
     <div className="mv-login-gate">
       <style>{CSS}</style>
-      <div className="mv-login-card">
-        <img src={LOGO_DATA_URI} alt="Logo công ty" className="mv-brand-logo" style={{ maxWidth: 160, margin: "0 auto 20px", display: "block" }} />
-        <h2 style={{ textAlign: "center", marginBottom: 6 }}>Đăng nhập</h2>
-        <p className="mv-row-sub" style={{ textAlign: "center", marginBottom: 20 }}>Quản lý sản xuất MV — GADA Studios</p>
+      <div className="mv-login-minimal">
+        <img src={LOGO_DATA_URI} alt="Logo công ty" className="mv-login-logo" />
         {!sync.scriptReady ? (
           <p className="mv-drive-intro" style={{ textAlign: "center" }}>Đang kết nối...</p>
         ) : (
           <>
-            <Field label="Email"><input type="email" className="mv-input" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-            <Field label="Mật khẩu"><input type="password" className="mv-input" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && email.trim() && password.length >= 6) sync.signIn(email, password); }} /></Field>
-            {sync.errorMsg && <p className="mv-drive-script-error">{sync.errorMsg}</p>}
+            <input
+              type="email" className="mv-login-input" placeholder="Email"
+              value={email} onChange={(e) => setEmail(e.target.value)}
+            />
+            <input
+              type="password" className="mv-login-input" placeholder="Mật khẩu"
+              value={password} onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && email.trim() && password.length >= 6) sync.signIn(email, password); }}
+            />
+            {sync.errorMsg && <p className="mv-drive-script-error" style={{ textAlign: "center" }}>{sync.errorMsg}</p>}
             <button
               className="mv-btn mv-btn-primary"
-              style={{ width: "100%", justifyContent: "center", marginTop: 8 }}
+              style={{ width: "100%", justifyContent: "center", marginTop: 6 }}
               disabled={!email.trim() || password.length < 6 || sync.status === "connecting"}
               onClick={() => sync.signIn(email, password)}
             >
-              <Cloud size={15} /> Đăng nhập
+              Đăng nhập
             </button>
-            <p className="mv-row-sub" style={{ textAlign: "center", marginTop: 14 }}>Chưa có tài khoản? Liên hệ quản trị viên để được cấp.</p>
           </>
         )}
       </div>
@@ -4843,7 +4847,15 @@ const CSS = `
 .mv-shell { display: flex; min-height: 100vh; }
 .mv-employee-shell { max-width: 1100px; margin: 0 auto; padding: 24px; }
 .mv-login-gate { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg); padding: 20px; }
-.mv-login-card { width: 100%; max-width: 380px; background: var(--surface-2); border: 1px solid var(--gold); border-radius: 14px; padding: 32px 28px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+.mv-login-minimal { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 14px; align-items: stretch; }
+.mv-login-logo { max-width: 190px; margin: 0 auto 26px; display: block; }
+.mv-login-input {
+  width: 100%; background: #2A2620; border: 1px solid #574F40; border-radius: 8px;
+  padding: 14px 16px; color: #FFFFFF; font-size: 15px; font-family: inherit;
+}
+.mv-login-input::placeholder { color: #9C948A; }
+.mv-login-input:focus { outline: none; border-color: var(--gold); background: #332D26; }
+.mv-login-minimal .mv-btn-primary:disabled { background: #4A4438; color: #9C948A; cursor: not-allowed; }
 .mv-employee-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
 .mv-employee-header-right { display: flex; align-items: center; gap: 12px; }
 .mv-employee-project-list .mv-slate { cursor: pointer; }
