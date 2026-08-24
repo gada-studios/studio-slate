@@ -85,6 +85,7 @@ const CloudOff = (p) => <Icon {...p}><path d="M22.61 16.95A5 5 0 0 0 18 10h-1.26
 const RefreshCw = (p) => <Icon {...p}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>;
 const Unlink = (p) => <Icon {...p}><path d="M18.84 12.25l1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="M5.17 11.75l-1.72 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><line x1="8" y1="2" x2="8" y2="5"/><line x1="2" y1="8" x2="5" y2="8"/><line x1="16" y1="19" x2="16" y2="22"/><line x1="19" y1="16" x2="22" y2="16"/></Icon>;
 const Settings = (p) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></Icon>;
+const Shield = (p) => <Icon {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></Icon>;
 const WifiOff = (p) => <Icon {...p}><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></Icon>;
 
 
@@ -963,6 +964,10 @@ const SB_TABLE = "app_data";
 // manual URL/key setup step and jump straight to email/password login.
 const DEFAULT_SB_URL = "https://omhcqniretlnjlejoccj.supabase.co";
 const DEFAULT_SB_KEY = "sb_publishable_XaYUnnycY30eugeLX5QGgw_DSAXjcST";
+// The single "owner" account — only this user gets the full app (financials,
+// contracts, payments, all projects). Anyone else who logs in only ever sees
+// the restricted employee view for whichever projects they're assigned to.
+const OWNER_USER_ID = "b8d0b909-015d-4272-85d6-b74a170019c1";
 
 /* ------------------------------- supabase sync ---------------------------------- */
 /* Email/password auth + a single JSONB row per user, via Supabase's client-side
@@ -1179,6 +1184,19 @@ function useSupabaseSync(dataRef, applyRemoteData) {
     }, 1500);
   }, [user, status, pushToRemote]);
 
+  // Pushes a trimmed, non-financial slice of each project (name, dates,
+  // timeline, checklist — no lineItems/contracts/payments) so that assigned
+  // employees can read/edit it via the separate project_shared table.
+  const pushProjectShared = useCallback(async (rows) => {
+    if (!clientRef.current || rows.length === 0) return;
+    try {
+      await clientRef.current.from("project_shared").upsert(
+        rows.map((r) => ({ project_id: r.project_id, data: r.data, updated_at: new Date().toISOString() })),
+        { onConflict: "project_id" }
+      );
+    } catch (e) { /* best-effort; owner's own data already saved via schedulePush */ }
+  }, []);
+
   useEffect(() => {
     const onOnline = () => {
       if (pendingPushRef.current && dataRef.current) schedulePush(dataRef.current);
@@ -1190,7 +1208,8 @@ function useSupabaseSync(dataRef, applyRemoteData) {
   return {
     supabaseUrl, supabaseKey, saveCredentials, scriptReady, scriptError,
     status, user, lastSyncedAt, errorMsg, conflict,
-    signUp, signIn, signOut, resolveConflict, schedulePush,
+    signUp, signIn, signOut, resolveConflict, schedulePush, pushProjectShared,
+    getClient: () => clientRef.current,
   };
 }
 
@@ -1251,6 +1270,7 @@ function useAppData() {
   const [loading, setLoading] = useState(true);
   const [saveError, setSaveError] = useState(false);
   const saveTimer = useRef(null);
+  const pushSharedTimer = useRef(null);
   const dataRef = useRef(null);
 
   const applyRemoteData = useCallback((remote) => {
@@ -1303,7 +1323,22 @@ function useAppData() {
         setSaveError(true);
       }
     }, 250);
-    if (syncRef.current) syncRef.current.schedulePush(next);
+    if (syncRef.current) {
+      syncRef.current.schedulePush(next);
+      const sharedRows = (next.projects || []).map((p) => ({
+        project_id: p.id,
+        data: {
+          id: p.id, name: p.name, client: p.client, director: p.director,
+          status: p.status, progress: p.progress, startDate: p.startDate, endDate: p.endDate,
+          milestones: (next.milestones || []).filter((m) => m.projectId === p.id),
+          checklistItems: (next.checklistItems || []).filter((c) => c.projectId === p.id),
+        },
+      }));
+      if (pushSharedTimer.current) clearTimeout(pushSharedTimer.current);
+      pushSharedTimer.current = setTimeout(() => {
+        if (syncRef.current) syncRef.current.pushProjectShared(sharedRows);
+      }, 1500);
+    }
   }, []);
 
   const resetToSample = useCallback(async () => {
@@ -3864,6 +3899,106 @@ function SuppliersPage({ data, persist }) {
   );
 }
 
+function EmployeeAccessPage({ data, sync }) {
+  const [rows, setRows] = useState(null);
+  const [loadError, setLoadError] = useState("");
+  const [projectId, setProjectId] = useState(data.projects[0]?.id || "");
+  const [email, setEmail] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const load = useCallback(async () => {
+    const client = sync.getClient();
+    if (!client) return;
+    setLoadError("");
+    try {
+      const { data: assignRows, error } = await client.from("project_assignments").select("id, project_id, project_name, employee_email, created_at").order("created_at", { ascending: false });
+      if (error) throw error;
+      setRows(assignRows || []);
+    } catch (e) {
+      setLoadError(e.message || "Không tải được danh sách phân quyền.");
+      setRows([]);
+    }
+  }, [sync]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const addAssignment = async () => {
+    if (!projectId || !email.trim()) return;
+    const client = sync.getClient();
+    const project = data.projects.find((p) => p.id === projectId);
+    try {
+      const { error } = await client.from("project_assignments").insert({ project_id: projectId, project_name: project?.name || "", employee_email: email.trim().toLowerCase() });
+      if (error) throw error;
+      // Make sure the project's shared (non-financial) data exists right away.
+      const shared = {
+        id: project.id, name: project.name, client: project.client, director: project.director,
+        status: project.status, progress: project.progress, startDate: project.startDate, endDate: project.endDate,
+        milestones: data.milestones.filter((m) => m.projectId === project.id),
+        checklistItems: data.checklistItems.filter((c) => c.projectId === project.id),
+      };
+      await client.from("project_shared").upsert({ project_id: project.id, data: shared, updated_at: new Date().toISOString() }, { onConflict: "project_id" });
+      setEmail("");
+      load();
+    } catch (e) {
+      setLoadError(e.message || "Không thêm được phân quyền.");
+    }
+  };
+
+  const removeAssignment = async (id) => {
+    const client = sync.getClient();
+    try {
+      await client.from("project_assignments").delete().eq("id", id);
+      setConfirmDelete(null);
+      load();
+    } catch (e) {
+      setLoadError(e.message || "Không xoá được.");
+    }
+  };
+
+  return (
+    <div>
+      <p className="mv-drive-intro" style={{ marginBottom: 18 }}>
+        Nhân viên được giao ở đây sẽ đăng nhập bằng tài khoản riêng (tự tạo trong Supabase → Authentication → Users),
+        chỉ thấy đúng (các) dự án được giao, chỉ có Timeline và Checklist — không thấy được hợp đồng, chi phí, thanh toán,
+        hay bất kỳ dự án nào khác.
+      </p>
+
+      <div className="mv-panel" style={{ marginBottom: 18 }}>
+        <h3 className="mv-panel-title" style={{ marginBottom: 12 }}><Plus size={16} /> Giao dự án cho nhân viên</h3>
+        <div className="mv-form-grid">
+          <Field label="Dự án">
+            <select className="mv-input" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              {data.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Email nhân viên (đã có tài khoản Supabase)">
+            <input type="email" className="mv-input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nhanvien@email.com" />
+          </Field>
+        </div>
+        <button className="mv-btn mv-btn-primary mv-btn-sm" disabled={!projectId || !email.trim()} onClick={addAssignment}>Giao dự án</button>
+        {loadError && <p className="mv-drive-script-error">{loadError}</p>}
+      </div>
+
+      <h3 className="mv-panel-title" style={{ marginBottom: 12 }}>Đang được giao</h3>
+      {rows === null && <p className="mv-empty-note">Đang tải...</p>}
+      {rows && rows.length === 0 && <p className="mv-empty-note">Chưa giao dự án cho ai.</p>}
+      {rows && rows.map((r) => (
+        confirmDelete === r.id ? (
+          <ConfirmBar key={r.id} text={`Thu hồi quyền của ${r.employee_email} với dự án "${r.project_name}"?`} onConfirm={() => removeAssignment(r.id)} onCancel={() => setConfirmDelete(null)} />
+        ) : (
+          <div key={r.id} className="mv-row-card">
+            <div style={{ flex: 1 }}>
+              <div className="mv-row-title">{r.employee_email}</div>
+              <div className="mv-row-sub">Dự án: {r.project_name}</div>
+            </div>
+            <button className="mv-icon-btn" onClick={() => setConfirmDelete(r.id)}><Trash2 size={14} /></button>
+          </div>
+        )
+      ))}
+    </div>
+  );
+}
+
 /* ------------------------------ auth settings UI ------------------------------ */
 
 function AuthStatusLine({ status, lastSyncedAt, errorMsg }) {
@@ -3984,6 +4119,199 @@ function SyncConflictModal({ conflict, onResolve }) {
 
 /* ----------------------------------- shell ------------------------------------ */
 
+/* --------------------------------- employee mode -------------------------------- */
+/* A deliberately separate, minimal app for non-owner logins. Reads/writes only
+   the project_shared table (name/dates/timeline/checklist — no financials),
+   scoped to whichever projects the owner has assigned via project_assignments.
+   Even a compromised employee account can never reach app_data (RLS blocks it). */
+
+function EmployeeApp({ sync }) {
+  const [assignments, setAssignments] = useState(null); // null = loading
+  const [projectsData, setProjectsData] = useState({}); // project_id -> data
+  const [activeId, setActiveId] = useState(null);
+  const [tab, setTab] = useState("timeline");
+  const [loadError, setLoadError] = useState("");
+  const [showMilestoneForm, setShowMilestoneForm] = useState(false);
+  const [editingMilestone, setEditingMilestone] = useState(null);
+  const [confirmRemove, setConfirmRemove] = useState(null);
+
+  const loadAll = useCallback(async () => {
+    const client = sync.getClient();
+    if (!client) return;
+    setLoadError("");
+    try {
+      const { data: assignRows, error: e1 } = await client.from("project_assignments").select("project_id, project_name").eq("employee_email", sync.user.email);
+      if (e1) throw e1;
+      setAssignments(assignRows || []);
+      if (assignRows && assignRows.length > 0) {
+        const ids = assignRows.map((a) => a.project_id);
+        const { data: sharedRows, error: e2 } = await client.from("project_shared").select("project_id, data").in("project_id", ids);
+        if (e2) throw e2;
+        const map = {};
+        (sharedRows || []).forEach((r) => { map[r.project_id] = r.data; });
+        setProjectsData(map);
+      }
+    } catch (e) {
+      setLoadError(e.message || "Không tải được dữ liệu");
+      setAssignments([]);
+    }
+  }, [sync]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  const patchProject = async (projectId, patchFn) => {
+    const client = sync.getClient();
+    const current = projectsData[projectId];
+    if (!current || !client) return;
+    const updated = patchFn(current);
+    setProjectsData((prev) => ({ ...prev, [projectId]: updated }));
+    try {
+      await client.from("project_shared").update({ data: updated, updated_at: new Date().toISOString() }).eq("project_id", projectId);
+    } catch (e) {
+      setLoadError("Không lưu được thay đổi — kiểm tra lại mạng.");
+    }
+  };
+
+  if (assignments === null) {
+    return <div className="mv-loading"><Loader2 className="mv-spin" size={22} /> Đang tải...</div>;
+  }
+
+  const active = activeId ? projectsData[activeId] : null;
+
+  return (
+    <div className="mv-app">
+      <style>{CSS}</style>
+      <div className="mv-employee-shell">
+        <div className="mv-employee-header">
+          <div className="mv-brand" style={{ padding: 0 }}>
+            <img src={LOGO_DATA_URI} alt="Logo công ty" className="mv-brand-logo" style={{ maxWidth: 120 }} />
+          </div>
+          <div className="mv-employee-header-right">
+            <span className="mv-row-sub">{sync.user.email}</span>
+            <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={sync.signOut}><Unlink size={14} /> Đăng xuất</button>
+          </div>
+        </div>
+
+        {loadError && <p className="mv-drive-script-error">{loadError}</p>}
+
+        {!active ? (
+          <div className="mv-employee-project-list">
+            <h2 className="mv-panel-title" style={{ marginBottom: 14 }}>Dự án được giao</h2>
+            {assignments.length === 0 && <p className="mv-empty-note">Bạn chưa được giao dự án nào. Liên hệ quản trị viên.</p>}
+            <div className="mv-slate-grid">
+              {assignments.map((a) => {
+                const p = projectsData[a.project_id];
+                if (!p) return null;
+                return (
+                  <div key={a.project_id} className="mv-slate" onClick={() => setActiveId(a.project_id)}>
+                    <div className="mv-slate-clap"><div className="mv-slate-stripes" /></div>
+                    <div className="mv-slate-body">
+                      <div className="mv-slate-row"><span>PROJECT</span><strong>{p.name}</strong></div>
+                      <div className="mv-slate-row"><span>CLIENT</span><strong>{p.client || "—"}</strong></div>
+                      <div className="mv-slate-footer">
+                        <Badge status={p.status} />
+                        <span className="mv-mono-date">{fmtDate(p.startDate)} → {fmtDate(p.endDate)}</span>
+                      </div>
+                      <ProgressBar value={p.progress} />
+                      <div className="mv-slate-open">Xem chi tiết <ChevronRight size={14} /></div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div>
+            <button className="mv-back" onClick={() => setActiveId(null)}><ArrowLeft size={16} /> Danh sách dự án</button>
+            <h2 style={{ margin: "10px 0 16px" }}>{active.name}</h2>
+            <div className="mv-tabs">
+              <button className={`mv-tab ${tab === "timeline" ? "mv-tab-active" : ""}`} onClick={() => setTab("timeline")}><Calendar size={15} /> Timeline</button>
+              <button className={`mv-tab ${tab === "checklist" ? "mv-tab-active" : ""}`} onClick={() => setTab("checklist")}><CheckCircle2 size={15} /> Checklist</button>
+            </div>
+
+            {tab === "timeline" && (
+              <div className="mv-panel">
+                <MilestoneCalendar
+                  milestones={active.milestones || []}
+                  timelineCatalog={buildDefaultTimelineCatalog()}
+                  projectName={active.name}
+                  onEdit={(m) => { setEditingMilestone(m); setShowMilestoneForm(true); }}
+                  onAddOnDate={(date, name) => patchProject(activeId, (cur) => ({ ...cur, milestones: [...(cur.milestones || []), { id: uid(), projectId: activeId, name, date, status: "Chưa bắt đầu" }] }))}
+                  onMoveToDate={(id, date) => patchProject(activeId, (cur) => ({ ...cur, milestones: (cur.milestones || []).map((m) => (m.id === id ? { ...m, date } : m)) }))}
+                  onDelete={(id) => patchProject(activeId, (cur) => ({ ...cur, milestones: (cur.milestones || []).filter((m) => m.id !== id) }))}
+                />
+                {showMilestoneForm && (
+                  <MilestoneForm
+                    initial={editingMilestone}
+                    onClose={() => { setShowMilestoneForm(false); setEditingMilestone(null); }}
+                    onSave={(m) => {
+                      patchProject(activeId, (cur) => ({
+                        ...cur,
+                        milestones: m.id
+                          ? (cur.milestones || []).map((x) => (x.id === m.id ? m : x))
+                          : [...(cur.milestones || []), { ...m, id: uid(), projectId: activeId }],
+                      }));
+                      setShowMilestoneForm(false);
+                      setEditingMilestone(null);
+                    }}
+                  />
+                )}
+              </div>
+            )}
+
+            {tab === "checklist" && (() => {
+              const items = active.checklistItems || [];
+              const grouped = [];
+              const seen = new Set();
+              items.forEach((c) => {
+                if (seen.has(c.category)) return;
+                seen.add(c.category);
+                grouped.push({ category: c.category, items: items.filter((x) => x.category === c.category) });
+              });
+              return (
+                <div className="mv-panel">
+                  <table className="mv-checklist-table">
+                    <thead>
+                      <tr><th>Hạng mục</th><th>Đầu mục công việc</th><th>Status</th><th>Chi tiết</th><th>Deadline</th></tr>
+                    </thead>
+                    {grouped.map(({ category, items: catItems }) => (
+                      <tbody key={category}>
+                        {catItems.map((c, idx) => (
+                          <tr key={c.id}>
+                            {idx === 0 && <td rowSpan={catItems.length} className="mv-checklist-category">{category}</td>}
+                            <td>{c.task}</td>
+                            <td>
+                              <select
+                                className="mv-checklist-status-select"
+                                style={{ background: CHECKLIST_STATUS_META[c.status]?.bg, color: CHECKLIST_STATUS_META[c.status]?.fg }}
+                                value={c.status}
+                                onChange={(e) => patchProject(activeId, (cur) => ({ ...cur, checklistItems: (cur.checklistItems || []).map((x) => (x.id === c.id ? { ...x, status: e.target.value } : x)) }))}
+                              >
+                                {CHECKLIST_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                            </td>
+                            <td>
+                              <input className="mv-checklist-inline-input" defaultValue={c.detail} onBlur={(e) => patchProject(activeId, (cur) => ({ ...cur, checklistItems: (cur.checklistItems || []).map((x) => (x.id === c.id ? { ...x, detail: e.target.value } : x)) }))} />
+                            </td>
+                            <td>
+                              <input type="date" className="mv-checklist-inline-input" defaultValue={c.deadline} onChange={(e) => patchProject(activeId, (cur) => ({ ...cur, checklistItems: (cur.checklistItems || []).map((x) => (x.id === c.id ? { ...x, deadline: e.target.value } : x)) }))} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    ))}
+                  </table>
+                  {items.length === 0 && <p className="mv-empty-note">Chưa có checklist cho dự án này.</p>}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const { data, loading, saveError, persist, resetToSample, clearAll, sync } = useAppData();
   const [view, setView] = useState("dashboard");
@@ -4025,7 +4353,12 @@ function App() {
     { id: "projects", label: "Dự án", icon: Film },
     { id: "personnel", label: "Nhân sự", icon: Users },
     { id: "suppliers", label: "Nhà cung cấp", icon: Building2 },
+    { id: "employee-access", label: "Phân quyền nhân viên", icon: Shield },
   ];
+
+  if (sync.user && sync.user.id !== OWNER_USER_ID) {
+    return <EmployeeApp sync={sync} />;
+  }
 
   return (
     <div className="mv-app">
@@ -4106,6 +4439,7 @@ function App() {
               {view === "project" && <ProjectDetail data={data} persist={persist} projectId={activeProjectId} back={() => setView("projects")} />}
               {view === "personnel" && <PersonnelPage data={data} persist={persist} />}
               {view === "suppliers" && <SuppliersPage data={data} persist={persist} />}
+              {view === "employee-access" && <EmployeeAccessPage data={data} sync={sync} />}
             </>
           )}
         </main>
@@ -4172,6 +4506,10 @@ const CSS = `
 }
 .mv-app * { box-sizing: border-box; }
 .mv-shell { display: flex; min-height: 100vh; }
+.mv-employee-shell { max-width: 1100px; margin: 0 auto; padding: 24px; }
+.mv-employee-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.mv-employee-header-right { display: flex; align-items: center; gap: 12px; }
+.mv-employee-project-list .mv-slate { cursor: pointer; }
 
 .mv-sidebar {
   width: 220px; flex-shrink: 0; background: var(--surface);
