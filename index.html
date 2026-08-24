@@ -2034,87 +2034,131 @@ function TransactionForm({ initial, onSave, onClose }) {
 
 /* -------------------------------- dashboard ---------------------------------- */
 
-function CompanyCalendar({ data, openProject }) {
-  const todayKey = todayISO();
-  const [viewDate, setViewDate] = useState(new Date());
-
-  const year = viewDate.getFullYear();
-  const month = viewDate.getMonth();
+function MonthGrid({ year, month, milestones, projects, openProject, todayKey }) {
   const firstOfMonth = new Date(year, month, 1);
   const leadingBlanks = (firstOfMonth.getDay() + 6) % 7;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-
   const cells = [];
   for (let i = 0; i < leadingBlanks; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   while (cells.length % 7 !== 0) cells.push(null);
 
   const milestonesByDay = {};
-  data.milestones.forEach((m) => {
+  milestones.forEach((m) => {
     if (!m.date) return;
     const dt = new Date(m.date);
     if (dt.getFullYear() === year && dt.getMonth() === month) {
       const key = dt.getDate();
-      const proj = data.projects.find((p) => p.id === m.projectId);
+      const proj = projects.find((p) => p.id === m.projectId);
       (milestonesByDay[key] = milestonesByDay[key] || []).push({ ...m, projectName: proj?.name || "—" });
     }
   });
 
-  const goMonth = (delta) => setViewDate(new Date(year, month + delta, 1));
+  return (
+    <div className="mv-month-block">
+      <div className="mv-calendar-head">
+        <span className="mv-calendar-title">{MONTH_LABELS[month]} {year}</span>
+      </div>
+      <div className="mv-calendar-weekdays">
+        {WEEKDAY_LABELS.map((w) => <div key={w} className="mv-calendar-weekday">{w}</div>)}
+      </div>
+      <div className="mv-calendar-grid">
+        {cells.map((d, i) => {
+          if (d === null) return <div key={i} className="mv-calendar-cell mv-calendar-cell-blank" />;
+          const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+          const dayMilestones = milestonesByDay[d] || [];
+          const isToday = dateKey === todayKey;
+          const isShooting = dayMilestones.some((m) => m.name === "Shooting");
+          return (
+            <div key={i} className={`mv-calendar-cell ${isToday ? "mv-calendar-cell-today" : ""} ${isShooting ? "mv-calendar-cell-shooting" : ""}`}>
+              <div className="mv-calendar-daynum">{d}</div>
+              <div className="mv-calendar-chips">
+                {dayMilestones.map((m) => (
+                  <button
+                    key={m.id}
+                    className="mv-calendar-chip"
+                    style={{ "--chip-color": STATUS_META[m.status]?.color || "#9C948A" }}
+                    onClick={() => openProject(m.projectId)}
+                    title={`${m.projectName} — ${m.name}`}
+                  >
+                    {m.projectName}: {m.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CompanyCalendar({ data, openProject }) {
+  const todayKey = todayISO();
+  const [viewDate, setViewDate] = useState(new Date());
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+
+  const goMonths = (delta) => setViewDate(new Date(year, month + delta, 1));
   const [printOrientation, setPrintOrientation] = useState("landscape");
+  const [printFromOffset, setPrintFromOffset] = useState(0);
+  const [printToOffset, setPrintToOffset] = useState(2);
   const handlePrint = () => printDocument(printOrientation);
+
+  const monthsToShow = [0, 1, 2].map((i) => {
+    const d = new Date(year, month + i, 1);
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
+  const printMonths = [];
+  for (let off = printFromOffset; off <= printToOffset; off++) {
+    const d = new Date(year, month + off, 1);
+    printMonths.push({ year: d.getFullYear(), month: d.getMonth() });
+  }
 
   return (
     <div className="mv-panel">
       <div className="mv-panel-head mv-no-print">
         <h3 className="mv-panel-title"><Calendar size={16} /> Lịch tổng quan toàn công ty</h3>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <button className="mv-icon-btn" onClick={() => goMonths(-3)}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /></button>
+          <button className="mv-icon-btn" onClick={() => goMonths(3)}><ChevronRight size={16} /></button>
           <div className="mv-orientation-toggle">
             <button className={printOrientation === "portrait" ? "mv-view-toggle-active" : ""} onClick={() => setPrintOrientation("portrait")}>Dọc</button>
             <button className={printOrientation === "landscape" ? "mv-view-toggle-active" : ""} onClick={() => setPrintOrientation("landscape")}>Ngang</button>
           </div>
+          <span className="mv-row-sub">Tải từ tháng</span>
+          <select className="mv-input mv-year-select" value={printFromOffset} onChange={(e) => setPrintFromOffset(Number(e.target.value))}>
+            {Array.from({ length: 12 }, (_, i) => i - 3).map((off) => {
+              const d = new Date(year, month + off, 1);
+              return <option key={off} value={off}>{MONTH_LABELS[d.getMonth()]} {d.getFullYear()}</option>;
+            })}
+          </select>
+          <span className="mv-row-sub">đến</span>
+          <select className="mv-input mv-year-select" value={printToOffset} onChange={(e) => setPrintToOffset(Number(e.target.value))}>
+            {Array.from({ length: 12 }, (_, i) => i - 3).map((off) => {
+              const d = new Date(year, month + off, 1);
+              return <option key={off} value={off}>{MONTH_LABELS[d.getMonth()]} {d.getFullYear()}</option>;
+            })}
+          </select>
           <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={handlePrint}><FileText size={14} /> Tải PDF</button>
         </div>
       </div>
-      <div className="mv-calendar" id="mv-printable-company-calendar">
+      <div id="mv-printable-company-calendar">
         <div className="mv-print-only mv-print-header">
           <img src={LOGO_DATA_URI} alt="Logo" className="mv-print-logo" />
           <div className="mv-print-title">Lịch tổng quan toàn công ty</div>
         </div>
-        <div className="mv-calendar-head">
-          <button className="mv-icon-btn mv-no-print" onClick={() => goMonth(-1)}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /></button>
-          <span className="mv-calendar-title">{MONTH_LABELS[month]} {year}</span>
-          <button className="mv-icon-btn mv-no-print" onClick={() => goMonth(1)}><ChevronRight size={16} /></button>
+        <div className="mv-month-grid-3 mv-no-print">
+          {monthsToShow.map(({ year: y, month: m }) => (
+            <MonthGrid key={`${y}-${m}`} year={y} month={m} milestones={data.milestones} projects={data.projects} openProject={openProject} todayKey={todayKey} />
+          ))}
         </div>
-        <div className="mv-calendar-weekdays">
-          {WEEKDAY_LABELS.map((w) => <div key={w} className="mv-calendar-weekday">{w}</div>)}
-        </div>
-        <div className="mv-calendar-grid">
-          {cells.map((d, i) => {
-            if (d === null) return <div key={i} className="mv-calendar-cell mv-calendar-cell-blank" />;
-            const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-            const dayMilestones = milestonesByDay[d] || [];
-            const isToday = dateKey === todayKey;
-            const isShooting = dayMilestones.some((m) => m.name === "Shooting");
-            return (
-              <div key={i} className={`mv-calendar-cell ${isToday ? "mv-calendar-cell-today" : ""} ${isShooting ? "mv-calendar-cell-shooting" : ""}`}>
-                <div className="mv-calendar-daynum">{d}</div>
-                <div className="mv-calendar-chips">
-                  {dayMilestones.map((m) => (
-                    <button
-                      key={m.id}
-                      className="mv-calendar-chip"
-                      style={{ "--chip-color": STATUS_META[m.status]?.color || "#9C948A" }}
-                      onClick={() => openProject(m.projectId)}
-                      title={`${m.projectName} — ${m.name}`}
-                    >
-                      {m.projectName}: {m.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+        <div className="mv-print-only">
+          {printMonths.map(({ year: y, month: m }, i) => (
+            <div key={`${y}-${m}`} className="mv-print-month-page" style={{ pageBreakAfter: i < printMonths.length - 1 ? "always" : "auto" }}>
+              <MonthGrid year={y} month={m} milestones={data.milestones} projects={data.projects} openProject={openProject} todayKey={todayKey} />
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -2635,7 +2679,16 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, onDe
   };
 
   const [printOrientation, setPrintOrientation] = useState("landscape");
+  const [printFromOffset, setPrintFromOffset] = useState(0);
+  const [printToOffset, setPrintToOffset] = useState(0);
   const handlePrint = () => printDocument(printOrientation);
+  const printMonths = [];
+  for (let off = printFromOffset; off <= printToOffset; off++) {
+    const d = new Date(year, month + off, 1);
+    printMonths.push({ year: d.getFullYear(), month: d.getMonth() });
+  }
+  const singleProjectId = milestones[0]?.projectId || "p";
+  const fakeProjects = [{ id: singleProjectId, name: projectName }];
 
   return (
     <div>
@@ -2651,14 +2704,29 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, onDe
           <button className={printOrientation === "portrait" ? "mv-view-toggle-active" : ""} onClick={() => setPrintOrientation("portrait")}>Dọc</button>
           <button className={printOrientation === "landscape" ? "mv-view-toggle-active" : ""} onClick={() => setPrintOrientation("landscape")}>Ngang</button>
         </div>
+        <span className="mv-row-sub">Tải từ tháng</span>
+        <select className="mv-input mv-year-select" value={printFromOffset} onChange={(e) => setPrintFromOffset(Number(e.target.value))}>
+          {Array.from({ length: 13 }, (_, i) => i - 6).map((off) => {
+            const d = new Date(year, month + off, 1);
+            return <option key={off} value={off}>{MONTH_LABELS[d.getMonth()]} {d.getFullYear()}</option>;
+          })}
+        </select>
+        <span className="mv-row-sub">đến</span>
+        <select className="mv-input mv-year-select" value={printToOffset} onChange={(e) => setPrintToOffset(Number(e.target.value))}>
+          {Array.from({ length: 13 }, (_, i) => i - 6).map((off) => {
+            const d = new Date(year, month + off, 1);
+            return <option key={off} value={off}>{MONTH_LABELS[d.getMonth()]} {d.getFullYear()}</option>;
+          })}
+        </select>
         <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={handlePrint}><FileText size={14} /> Tải PDF</button>
       </div>
 
-      <div className="mv-calendar" id="mv-printable-calendar">
+      <div id="mv-printable-calendar">
         <div className="mv-print-only mv-print-header">
           <img src={LOGO_DATA_URI} alt="Logo" className="mv-print-logo" />
           <div className="mv-print-title">{projectName} — Timeline</div>
         </div>
+        <div className="mv-calendar mv-no-print">
         <div className="mv-calendar-head">
           <button className="mv-icon-btn mv-no-print" onClick={() => goMonth(-1)}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /></button>
           <span className="mv-calendar-title">{MONTH_LABELS[month]} {year}</span>
@@ -2711,6 +2779,15 @@ function MilestoneCalendar({ milestones, onEdit, onAddOnDate, onMoveToDate, onDe
               </div>
             );
           })}
+        </div>
+        </div>
+
+        <div className="mv-print-only">
+          {printMonths.map(({ year: y, month: m }, i) => (
+            <div key={`${y}-${m}`} className="mv-print-month-page" style={{ pageBreakAfter: i < printMonths.length - 1 ? "always" : "auto" }}>
+              <MonthGrid year={y} month={m} milestones={milestones} projects={fakeProjects} openProject={() => {}} todayKey={todayKey} />
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -3994,6 +4071,7 @@ function EmployeeAccessPage({ data, sync }) {
       const { data: assignRows, error } = await client.from("project_assignments").select("id, project_id, project_name, employee_email, created_at").order("created_at", { ascending: false });
       if (error) throw error;
       setRows(assignRows || []);
+      resyncAll(assignRows || []); // keep every assigned project's shared data (incl. hạng mục list) always fresh
     } catch (e) {
       setLoadError(e.message || "Không tải được danh sách phân quyền.");
       setRows([]);
@@ -4037,12 +4115,13 @@ function EmployeeAccessPage({ data, sync }) {
   };
 
   const [resyncing, setResyncing] = useState(false);
-  const resyncAll = async () => {
+  const resyncAll = async (assignRows) => {
     const client = sync.getClient();
-    if (!client || !rows) return;
+    const source = assignRows || rows;
+    if (!client || !source) return;
     setResyncing(true);
     try {
-      const uniqueProjectIds = Array.from(new Set(rows.map((r) => r.project_id)));
+      const uniqueProjectIds = Array.from(new Set(source.map((r) => r.project_id)));
       const sharedRows = uniqueProjectIds
         .map((pid) => data.projects.find((p) => p.id === pid))
         .filter(Boolean)
@@ -4091,7 +4170,7 @@ function EmployeeAccessPage({ data, sync }) {
 
       <div className="mv-panel-head" style={{ marginBottom: 0 }}>
         <h3 className="mv-panel-title">Đang được giao</h3>
-        <button className="mv-btn mv-btn-ghost mv-btn-sm" disabled={resyncing} onClick={resyncAll}><RefreshCw size={13} /> {resyncing ? "Đang đồng bộ..." : "Đồng bộ lại dữ liệu (Timeline/Checklist/Chi phí)"}</button>
+        <button className="mv-btn mv-btn-ghost mv-btn-sm" disabled={resyncing} onClick={() => resyncAll()}><RefreshCw size={13} /> {resyncing ? "Đang đồng bộ..." : "Đồng bộ lại dữ liệu (Timeline/Checklist/Chi phí)"}</button>
       </div>
       {rows === null && <p className="mv-empty-note">Đang tải...</p>}
       {rows && rows.length === 0 && <p className="mv-empty-note">Chưa giao dự án cho ai.</p>}
@@ -4376,6 +4455,41 @@ function EmployeeApp({ sync }) {
   const [myExpenses, setMyExpenses] = useState({}); // project_id -> [rows]
   const [expenseForm, setExpenseForm] = useState({ lineItemId: "", amount: "", date: todayISO(), note: "" });
   const [expenseSubmitting, setExpenseSubmitting] = useState(false);
+  const [editingExpenseId, setEditingExpenseId] = useState(null);
+  const [confirmDeleteExpense, setConfirmDeleteExpense] = useState(null);
+  const [liveCategories, setLiveCategories] = useState({}); // project_id -> [{id,name,group}]
+
+  const loadLiveCategories = useCallback(async () => {
+    const client = sync.getClient();
+    if (!client) return;
+    try {
+      const { data: result, error } = await client.rpc("get_my_expense_categories");
+      if (error) throw error;
+      const map = {};
+      (result || []).forEach((r) => { map[r.projectId] = r.categories || []; });
+      setLiveCategories(map);
+    } catch (e) {
+      setLoadError(e.message || "Không tải được danh sách hạng mục.");
+    }
+  }, [sync]);
+
+  const [companyCalendarData, setCompanyCalendarData] = useState(null);
+  const loadCompanyCalendar = useCallback(async () => {
+    const client = sync.getClient();
+    if (!client) return;
+    try {
+      const { data: result, error } = await client.rpc("get_company_calendar");
+      if (error) throw error;
+      setCompanyCalendarData({
+        projects: result || [],
+        milestones: (result || []).flatMap((p) => (p.milestones || []).map((m) => ({ ...m, projectId: p.id }))),
+      });
+    } catch (e) {
+      setLoadError(e.message || "Không tải được lịch công ty.");
+    }
+  }, [sync]);
+
+  const [homeView, setHomeView] = useState("projects"); // projects | calendar
 
   const loadAll = useCallback(async () => {
     const client = sync.getClient();
@@ -4408,19 +4522,31 @@ function EmployeeApp({ sync }) {
   const submitExpense = async () => {
     const client = sync.getClient();
     if (!client || !activeId || !expenseForm.lineItemId || !expenseForm.amount) return;
-    const category = (projectsData[activeId]?.expenseCategories || []).find((c) => c.id === expenseForm.lineItemId);
+    const category = (liveCategories[activeId] || []).find((c) => c.id === expenseForm.lineItemId);
     setExpenseSubmitting(true);
     try {
-      const { error } = await client.from("expense_reports").insert({
-        project_id: activeId,
-        line_item_id: expenseForm.lineItemId,
-        line_item_name: category?.name || "",
-        amount: Number(expenseForm.amount) || 0,
-        spent_date: expenseForm.date || null,
-        note: expenseForm.note,
-        submitted_by: sync.user.email,
-      });
-      if (error) throw error;
+      if (editingExpenseId) {
+        const { error } = await client.from("expense_reports").update({
+          line_item_id: expenseForm.lineItemId,
+          line_item_name: category?.name || "",
+          amount: Number(expenseForm.amount) || 0,
+          spent_date: expenseForm.date || null,
+          note: expenseForm.note,
+        }).eq("id", editingExpenseId);
+        if (error) throw error;
+        setEditingExpenseId(null);
+      } else {
+        const { error } = await client.from("expense_reports").insert({
+          project_id: activeId,
+          line_item_id: expenseForm.lineItemId,
+          line_item_name: category?.name || "",
+          amount: Number(expenseForm.amount) || 0,
+          spent_date: expenseForm.date || null,
+          note: expenseForm.note,
+          submitted_by: (sync.user.email || "").toLowerCase(),
+        });
+        if (error) throw error;
+      }
       setExpenseForm({ lineItemId: "", amount: "", date: todayISO(), note: "" });
       loadAll();
     } catch (e) {
@@ -4430,7 +4556,25 @@ function EmployeeApp({ sync }) {
     }
   };
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  const startEditExpense = (r) => {
+    setEditingExpenseId(r.id);
+    setExpenseForm({ lineItemId: r.line_item_id || "", amount: String(r.amount), date: r.spent_date || todayISO(), note: r.note || "" });
+  };
+
+  const deleteExpense = async (id) => {
+    const client = sync.getClient();
+    if (!client) return;
+    try {
+      const { error } = await client.from("expense_reports").delete().eq("id", id);
+      if (error) throw error;
+      setConfirmDeleteExpense(null);
+      loadAll();
+    } catch (e) {
+      setLoadError(e.message || "Không xoá được khoản chi.");
+    }
+  };
+
+  useEffect(() => { loadAll(); loadLiveCategories(); loadCompanyCalendar(); }, [loadAll, loadLiveCategories, loadCompanyCalendar]);
 
   const patchProject = async (projectId, patchFn) => {
     const client = sync.getClient();
@@ -4467,33 +4611,14 @@ function EmployeeApp({ sync }) {
 
         {loadError && <p className="mv-drive-script-error">{loadError}</p>}
 
-        {!active ? (
-          <div className="mv-employee-project-list">
-            <h2 className="mv-panel-title" style={{ marginBottom: 14 }}>Dự án được giao</h2>
-            {assignments.length === 0 && <p className="mv-empty-note">Bạn chưa được giao dự án nào. Liên hệ quản trị viên.</p>}
-            <div className="mv-slate-grid">
-              {assignments.map((a) => {
-                const p = projectsData[a.project_id];
-                if (!p) return null;
-                return (
-                  <div key={a.project_id} className="mv-slate" onClick={() => setActiveId(a.project_id)}>
-                    <div className="mv-slate-clap"><div className="mv-slate-stripes" /></div>
-                    <div className="mv-slate-body">
-                      <div className="mv-slate-row"><span>PROJECT</span><strong>{p.name}</strong></div>
-                      <div className="mv-slate-row"><span>CLIENT</span><strong>{p.client || "—"}</strong></div>
-                      <div className="mv-slate-footer">
-                        <Badge status={p.status} />
-                        <span className="mv-mono-date">{fmtDate(p.startDate)} → {fmtDate(p.endDate)}</span>
-                      </div>
-                      <ProgressBar value={p.progress} />
-                      <div className="mv-slate-open">Xem chi tiết <ChevronRight size={14} /></div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+        {!active && (
+          <div className="mv-view-toggle" style={{ marginBottom: 16 }}>
+            <button className={homeView === "projects" ? "mv-view-toggle-active" : ""} onClick={() => setHomeView("projects")}>Dự án được giao</button>
+            <button className={homeView === "calendar" ? "mv-view-toggle-active" : ""} onClick={() => setHomeView("calendar")}>Lịch tổng quan</button>
           </div>
-        ) : (
+        )}
+
+        {active ? (
           <div>
             <button className="mv-back" onClick={() => setActiveId(null)}><ArrowLeft size={16} /> Danh sách dự án</button>
             <h2 style={{ margin: "10px 0 16px" }}>{active.name}</h2>
@@ -4581,7 +4706,7 @@ function EmployeeApp({ sync }) {
             })()}
 
             {tab === "expense" && (() => {
-              const categories = active.expenseCategories || [];
+              const categories = liveCategories[activeId] || [];
               const grouped = [];
               const seenG = new Set();
               categories.forEach((c) => {
@@ -4592,7 +4717,7 @@ function EmployeeApp({ sync }) {
               const myList = myExpenses[activeId] || [];
               return (
                 <div className="mv-panel">
-                  <h3 className="mv-panel-title" style={{ marginBottom: 12 }}><Plus size={16} /> Báo khoản chi mới</h3>
+                  <h3 className="mv-panel-title" style={{ marginBottom: 12 }}><Plus size={16} /> {editingExpenseId ? "Sửa khoản chi" : "Báo khoản chi mới"}</h3>
                   {categories.length === 0 ? (
                     <p className="mv-empty-note">Chưa có hạng mục nào trong dự án này để báo chi.</p>
                   ) : (
@@ -4611,10 +4736,15 @@ function EmployeeApp({ sync }) {
                         <Field label="Số tiền đã chi (VND)"><input type="number" className="mv-input" value={expenseForm.amount} onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value })} /></Field>
                         <Field label="Ngày chi"><input type="date" className="mv-input" value={expenseForm.date} onChange={(e) => setExpenseForm({ ...expenseForm, date: e.target.value })} /></Field>
                       </div>
-                      <Field label="Ghi chú"><input className="mv-input" value={expenseForm.note} onChange={(e) => setExpenseForm({ ...expenseForm, note: e.target.value })} placeholder="VD: đợt 2, mua thêm phụ kiện..." /></Field>
-                      <button className="mv-btn mv-btn-primary mv-btn-sm" disabled={!expenseForm.lineItemId || !expenseForm.amount || expenseSubmitting} onClick={submitExpense}>
-                        {expenseSubmitting ? "Đang gửi..." : "Gửi khoản chi"}
-                      </button>
+                      <Field label="Tên khoản chi nhỏ / Ghi chú"><input className="mv-input" value={expenseForm.note} onChange={(e) => setExpenseForm({ ...expenseForm, note: e.target.value })} placeholder="VD: Cọc bối cảnh đợt 1, Thuê thêm đèn..." /></Field>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button className="mv-btn mv-btn-primary mv-btn-sm" disabled={!expenseForm.lineItemId || !expenseForm.amount || expenseSubmitting} onClick={submitExpense}>
+                          {expenseSubmitting ? "Đang lưu..." : editingExpenseId ? "Lưu thay đổi" : "Gửi khoản chi"}
+                        </button>
+                        {editingExpenseId && (
+                          <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => { setEditingExpenseId(null); setExpenseForm({ lineItemId: "", amount: "", date: todayISO(), note: "" }); }}>Huỷ sửa</button>
+                        )}
+                      </div>
                     </>
                   )}
 
@@ -4622,17 +4752,57 @@ function EmployeeApp({ sync }) {
                   <h3 className="mv-panel-title" style={{ marginBottom: 12 }}>Các khoản đã báo</h3>
                   {myList.length === 0 && <p className="mv-empty-note">Bạn chưa báo khoản chi nào cho dự án này.</p>}
                   {myList.map((r) => (
-                    <div key={r.id} className="mv-row-card">
-                      <div style={{ flex: 1 }}>
-                        <div className="mv-row-title">{r.line_item_name} — {fmtVND(r.amount)}</div>
-                        <div className="mv-row-sub mv-mono-date">{fmtDate(r.spent_date)}</div>
-                        {r.note && <div className="mv-row-sub">{r.note}</div>}
+                    confirmDeleteExpense === r.id ? (
+                      <ConfirmBar key={r.id} text="Xoá khoản chi này?" onConfirm={() => deleteExpense(r.id)} onCancel={() => setConfirmDeleteExpense(null)} />
+                    ) : (
+                      <div key={r.id} className="mv-row-card">
+                        <div style={{ flex: 1 }}>
+                          <div className="mv-row-title">{r.line_item_name} — {fmtVND(r.amount)}</div>
+                          <div className="mv-row-sub mv-mono-date">{fmtDate(r.spent_date)}</div>
+                          {r.note && <div className="mv-row-sub">{r.note}</div>}
+                        </div>
+                        <div className="mv-row-right">
+                          <button className="mv-icon-btn" onClick={() => startEditExpense(r)}><Pencil size={14} /></button>
+                          <button className="mv-icon-btn" onClick={() => setConfirmDeleteExpense(r.id)}><Trash2 size={14} /></button>
+                        </div>
                       </div>
-                    </div>
+                    )
                   ))}
                 </div>
               );
             })()}
+          </div>
+        ) : homeView === "calendar" ? (
+          companyCalendarData ? (
+            <CompanyCalendar data={companyCalendarData} openProject={() => {}} />
+          ) : (
+            <p className="mv-empty-note">Đang tải lịch công ty...</p>
+          )
+        ) : (
+          <div className="mv-employee-project-list">
+            <h2 className="mv-panel-title" style={{ marginBottom: 14 }}>Dự án được giao</h2>
+            {assignments.length === 0 && <p className="mv-empty-note">Bạn chưa được giao dự án nào. Liên hệ quản trị viên.</p>}
+            <div className="mv-slate-grid">
+              {assignments.map((a) => {
+                const p = projectsData[a.project_id];
+                if (!p) return null;
+                return (
+                  <div key={a.project_id} className="mv-slate" onClick={() => setActiveId(a.project_id)}>
+                    <div className="mv-slate-clap"><div className="mv-slate-stripes" /></div>
+                    <div className="mv-slate-body">
+                      <div className="mv-slate-row"><span>PROJECT</span><strong>{p.name}</strong></div>
+                      <div className="mv-slate-row"><span>CLIENT</span><strong>{p.client || "—"}</strong></div>
+                      <div className="mv-slate-footer">
+                        <Badge status={p.status} />
+                        <span className="mv-mono-date">{fmtDate(p.startDate)} → {fmtDate(p.endDate)}</span>
+                      </div>
+                      <ProgressBar value={p.progress} />
+                      <div className="mv-slate-open">Xem chi tiết <ChevronRight size={14} /></div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -5055,6 +5225,11 @@ const CSS = `
 .mv-calendar-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 4px; }
 .mv-calendar-weekday { text-align: center; font-size: 11px; color: var(--text-muted); font-weight: 600; padding: 4px 0; }
 .mv-calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: minmax(72px, auto); gap: 4px; }
+.mv-month-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.mv-month-block .mv-calendar-grid { grid-auto-rows: minmax(52px, auto); }
+.mv-month-block .mv-calendar-chip { font-size: 9.5px; padding: 1px 4px; }
+@media (max-width: 1100px) { .mv-month-grid-3 { grid-template-columns: 1fr; } }
+.mv-print-month-page { margin-bottom: 20px; }
 .mv-calendar-cell { border: 1px solid var(--border); border-radius: 8px; padding: 5px; background: var(--surface-2); overflow: hidden; }
 .mv-calendar-cell-blank { border: none; background: none; }
 .mv-calendar-cell-today { border-color: var(--gold); }
