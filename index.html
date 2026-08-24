@@ -957,6 +957,12 @@ const seedData = () => {
 const LS_SB_URL = "mv_supabase_url";
 const LS_SB_KEY = "mv_supabase_key";
 const SB_TABLE = "app_data";
+// Hardcoded default connection — the "anon public" key is designed to be
+// safe to expose client-side (protection comes from Row Level Security on
+// the server, not from hiding this key). This lets every device skip the
+// manual URL/key setup step and jump straight to email/password login.
+const DEFAULT_SB_URL = "https://omhcqniretlnjlejoccj.supabase.co";
+const DEFAULT_SB_KEY = "sb_publishable_XaYUnnycY30eugeLX5QGgw_DSAXjcST";
 
 /* ------------------------------- supabase sync ---------------------------------- */
 /* Email/password auth + a single JSONB row per user, via Supabase's client-side
@@ -983,8 +989,8 @@ function loadSupabaseScript() {
 }
 
 function useSupabaseSync(dataRef, applyRemoteData) {
-  const [supabaseUrl, setSupabaseUrlState] = useState(() => localStorage.getItem(LS_SB_URL) || "");
-  const [supabaseKey, setSupabaseKeyState] = useState(() => localStorage.getItem(LS_SB_KEY) || "");
+  const [supabaseUrl, setSupabaseUrlState] = useState(() => localStorage.getItem(LS_SB_URL) || DEFAULT_SB_URL);
+  const [supabaseKey, setSupabaseKeyState] = useState(() => localStorage.getItem(LS_SB_KEY) || DEFAULT_SB_KEY);
   const [scriptReady, setScriptReady] = useState(false);
   const [scriptError, setScriptError] = useState(false);
   const [status, setStatus] = useState("disconnected"); // disconnected|connecting|syncing|synced|offline|error|conflict
@@ -3879,37 +3885,28 @@ function AuthStatusLine({ status, lastSyncedAt, errorMsg }) {
 }
 
 function AuthSettingsModal({ sync, onClose }) {
-  const [url, setUrl] = useState(sync.supabaseUrl);
-  const [key, setKey] = useState(sync.supabaseKey);
   const [mode, setMode] = useState("signin"); // signin | signup
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const hasCreds = !!sync.supabaseUrl && !!sync.supabaseKey;
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [url, setUrl] = useState(sync.supabaseUrl);
+  const [key, setKey] = useState(sync.supabaseKey);
   const isLoggedIn = !!sync.user;
 
   return (
     <Modal title="Đăng nhập & đồng bộ" onClose={onClose} wide>
-      <p className="mv-drive-intro">
-        Dữ liệu công ty được lưu trên máy chủ riêng của bạn (Supabase), đăng nhập bằng email/mật khẩu —
-        dùng được trên mọi thiết bị, không cần kết nối lại mỗi lần. App vẫn hoạt động khi mất mạng,
-        dữ liệu tự đồng bộ lại khi có mạng.
-      </p>
-
-      {!hasCreds || !sync.scriptReady ? (
+      {!sync.scriptReady ? (
         <>
-          <div className="mv-form-grid">
-            <Field label="Supabase Project URL"><input className="mv-input" placeholder="https://xxxx.supabase.co" value={url} onChange={(e) => setUrl(e.target.value)} /></Field>
-            <Field label="Supabase anon public key"><input className="mv-input" placeholder="eyJhbGciOi..." value={key} onChange={(e) => setKey(e.target.value)} /></Field>
-          </div>
-          <button className="mv-btn mv-btn-ghost mv-btn-sm" disabled={!url.trim() || !key.trim()} onClick={() => sync.saveCredentials(url, key)}>
-            Lưu thông tin kết nối
-          </button>
-          {sync.scriptError && <p className="mv-drive-script-error">Không tải được thư viện đồng bộ — kiểm tra lại mạng rồi thử lại.</p>}
-          <p className="mv-drive-hint">Chưa có thông tin này? Làm theo hướng dẫn "Thiết lập Supabase" đi kèm để lấy trong khoảng 5 phút.</p>
+          <p className="mv-drive-intro">Đang kết nối...</p>
+          {sync.scriptError && (
+            <>
+              <p className="mv-drive-script-error">Không tải được thư viện đồng bộ — kiểm tra lại mạng rồi thử lại.</p>
+              <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => sync.saveCredentials(sync.supabaseUrl, sync.supabaseKey)}>Thử lại</button>
+            </>
+          )}
         </>
       ) : isLoggedIn ? (
         <>
-          <div className="mv-drive-divider" />
           <AuthStatusLine status={sync.status} lastSyncedAt={sync.lastSyncedAt} errorMsg={sync.errorMsg} />
           <p className="mv-row-sub" style={{ marginTop: 8 }}>Đăng nhập với: {sync.user.email}</p>
           <div className="mv-modal-actions" style={{ justifyContent: "flex-start", marginTop: 14 }}>
@@ -3918,7 +3915,7 @@ function AuthSettingsModal({ sync, onClose }) {
         </>
       ) : (
         <>
-          <div className="mv-drive-divider" />
+          <p className="mv-drive-intro">Đăng nhập bằng email/mật khẩu — dùng được trên mọi thiết bị, không cần cài đặt gì thêm.</p>
           <div className="mv-view-toggle" style={{ marginBottom: 14 }}>
             <button className={mode === "signin" ? "mv-view-toggle-active" : ""} onClick={() => setMode("signin")}>Đăng nhập</button>
             <button className={mode === "signup" ? "mv-view-toggle-active" : ""} onClick={() => setMode("signup")}>Đăng ký</button>
@@ -3935,6 +3932,18 @@ function AuthSettingsModal({ sync, onClose }) {
               <Cloud size={15} /> {mode === "signup" ? "Đăng ký" : "Đăng nhập"}
             </button>
           </div>
+
+          <div className="mv-drive-divider" />
+          <button className="mv-reset-link" onClick={() => setShowAdvanced((v) => !v)}>{showAdvanced ? "Ẩn cài đặt nâng cao" : "Cài đặt nâng cao (đổi máy chủ)"}</button>
+          {showAdvanced && (
+            <div style={{ marginTop: 10 }}>
+              <div className="mv-form-grid">
+                <Field label="Supabase Project URL"><input className="mv-input" value={url} onChange={(e) => setUrl(e.target.value)} /></Field>
+                <Field label="Supabase anon public key"><input className="mv-input" value={key} onChange={(e) => setKey(e.target.value)} /></Field>
+              </div>
+              <button className="mv-btn mv-btn-ghost mv-btn-sm" disabled={!url.trim() || !key.trim()} onClick={() => sync.saveCredentials(url, key)}>Lưu thông tin kết nối</button>
+            </div>
+          )}
         </>
       )}
     </Modal>
