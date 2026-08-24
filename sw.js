@@ -1,4 +1,4 @@
-const CACHE_NAME = "studio-slate-v2";
+const CACHE_NAME = "studio-slate-v3";
 const PRECACHE_URLS = [
   "./",
   "./index.html",
@@ -41,7 +41,7 @@ const BYPASS_HOSTS = ["googleapis.com", "accounts.google.com", "google.com", "su
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (BYPASS_HOSTS.some((h) => url.hostname === h || url.hostname.endsWith("." + h))) {
+  if (BYPASS_HOSTS.some((h) => url.hostname === h || url.hostname.endsWith(".") + h))) {
     return; // let the browser handle it natively, no caching, no interception
   }
 
