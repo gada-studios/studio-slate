@@ -1871,7 +1871,7 @@ function LineItemForm({ initial, onSave, onClose, personnel, onQuickAddPersonnel
         <Field label="Tổng báo khách (tự tính)"><input className="mv-input" value={fmtVND(totalBilledToClient)} disabled /></Field>
       </div>
       <div className="mv-form-grid">
-        <Field label="Thực chi — chi phí nội bộ (VND)"><input type="number" className="mv-input" value={f.actualValue} onChange={set("actualValue")} placeholder="Số tiền công ty thực sự chi ra" /></Field>
+        <Field label="Dự chi — chi phí nội bộ (VND)"><input type="number" className="mv-input" value={f.actualValue} onChange={set("actualValue")} placeholder="Số tiền công ty dự kiến chi ra" /></Field>
         <Field label="Đã thanh toán (VND)"><input type="number" className="mv-input" value={f.paidAmount} onChange={set("paidAmount")} /></Field>
       </div>
       <Field label="Ghi chú"><textarea className="mv-input" rows={2} value={f.notes} onChange={set("notes")} placeholder="VD: lý do phát sinh, thoả thuận thêm..." /></Field>
@@ -2934,16 +2934,6 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
   const [showMilestoneForm, setShowMilestoneForm] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null);
-  const [expenseReports, setExpenseReports] = useState([]);
-
-  useEffect(() => {
-    const client = sync?.getClient();
-    if (!client) return;
-    client.from("expense_reports").select("*").eq("project_id", projectId)
-      .then(({ data: expRows, error }) => {
-        if (!error) setExpenseReports(expRows || []);
-      });
-  }, [sync, projectId]);
 
   useEffect(() => {
     if (tab !== "checklist") return;
@@ -2974,18 +2964,8 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
 
   const thu = transactions.filter((t) => t.type === "Thu").reduce((s, t) => s + t.amount, 0);
   const chi = transactions.filter((t) => t.type === "Chi").reduce((s, t) => s + t.amount, 0);
-  const getLineItemActual = (l) => {
-    const matched = expenseReports.filter((r) => r.line_item_id === l.id);
-    if (matched.length > 0) return matched.reduce((s, r) => s + Number(r.amount || 0), 0);
-    return l.actualValue || 0;
-  };
-  const customMiscExpenses = expenseReports.filter((r) => r.line_item_id && r.line_item_id.startsWith("misc-"));
-  const customMiscTotal = customMiscExpenses.reduce((s, r) => s + Number(r.amount || 0), 0);
-
-  const lineItemsDuChi = lineItems.reduce((s, l) => s + (l.actualValue || 0), 0);
-  const lineItemsThucChi = lineItems.reduce((s, l) => s + getLineItemActual(l), 0) + customMiscTotal;
-  const lineItemsActual = lineItemsThucChi;
-  const lineItemsDebt = lineItems.reduce((s, l) => s + (getLineItemActual(l) - (l.paidAmount || 0)), 0) + customMiscTotal;
+  const lineItemsActual = lineItems.reduce((s, l) => s + l.actualValue, 0);
+  const lineItemsDebt = lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0);
   const lineItemsSubtotal = lineItems.reduce((s, l) => s + l.contractValue, 0);
   const lineItemsExtraTotal = lineItems.reduce((s, l) => s + (l.extraAmount || 0), 0);
   const includeVat = project.includeVat !== false; // default true, matches prior behavior
@@ -3001,6 +2981,27 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
   const originalWithVat = lineItemsSubtotal * vatMultiplier;
   const extraWithVat = lineItemsExtraTotal * vatMultiplier;
   const lineItemsWithExtra = lineItems.filter((l) => (l.extraAmount || 0) > 0);
+
+  // "Thực chi" (live, from employee-submitted expense_reports) — falls back to
+  // "Dự chi" (lineItem.actualValue) for any hạng mục nobody has reported yet.
+  const [employeeActualByLineItem, setEmployeeActualByLineItem] = useState({});
+  useEffect(() => {
+    const client = sync?.getClient?.();
+    if (!client) return;
+    let cancelled = false;
+    client.from("expense_reports").select("line_item_id, amount").eq("project_id", projectId).then(({ data: rows, error }) => {
+      if (cancelled || error || !rows) return;
+      const sums = {};
+      rows.forEach((r) => {
+        if (!r.line_item_id) return;
+        sums[r.line_item_id] = (sums[r.line_item_id] || 0) + Number(r.amount || 0);
+      });
+      setEmployeeActualByLineItem(sums);
+    });
+    return () => { cancelled = true; };
+  }, [sync, projectId, tab]);
+  const thucChi = (l) => (employeeActualByLineItem[l.id] !== undefined ? employeeActualByLineItem[l.id] : l.actualValue);
+  const lineItemsThucChiTotal = lineItems.reduce((s, l) => s + thucChi(l), 0);
 
   const paymentsWithMeta = (() => {
     const asc = [...payments].sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -3112,8 +3113,6 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
       });
       rows.push([]);
       rows.push(["Tổng theo đơn giá", "", "", lineItemsSubtotal]);
-      rows.push(["Tổng phát sinh (báo khách)", "", "", lineItemsExtraTotal]);
-      rows.push(["Tổng báo khách (chưa VAT)", "", "", billableTotal]);
       rows.push(["Thuế VAT (8%)", "", "", vatAmount]);
       rows.push([includeVat ? "TỔNG SAU VAT" : "TỔNG CỘNG (không VAT)", "", "", clientTotal]);
       const ws = window.XLSX.utils.aoa_to_sheet(rows);
@@ -3135,14 +3134,15 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
       const wrap = document.createElement("div");
       wrap.style.cssText = "position:fixed; left:-9999px; top:0; width:800px; background:#fff; color:#111; font-family:Arial,sans-serif; padding:28px;";
       let rowsHtml = "";
-      grouped.forEach(({ group, items }) => {
-        rowsHtml += `<tr><td colspan="4" style="background:#F0E6C8; font-weight:700; padding:6px 8px;">${group}</td></tr>`;
-        items.forEach((it) => {
-          rowsHtml += `<tr>
-            <td style="padding:6px 8px; border-bottom:1px solid #ddd;">${it.name}</td>
-            <td style="padding:6px 8px; border-bottom:1px solid #ddd; text-align:center;">${it.quantity || 1}</td>
-            <td style="padding:6px 8px; border-bottom:1px solid #ddd; text-align:right;">${fmtVND(it.unitPrice || 0)}</td>
-            <td style="padding:6px 8px; border-bottom:1px solid #ddd; text-align:right;">${fmtVND(it.contractValue)}</td>
+      grouped.forEach(({ group, items }, gi) => {
+        rowsHtml += `<tr><td colspan="4" style="background:#F0E6C8; font-weight:700; padding:6px 8px; border:1px solid #ccc;">${group}</td></tr>`;
+        items.forEach((it, ii) => {
+          const zebra = (ii % 2 === 0) ? "#fff" : "#F5F5F0";
+          rowsHtml += `<tr style="background:${zebra};">
+            <td style="padding:6px 8px; border:1px solid #ddd;">${it.name}</td>
+            <td style="padding:6px 8px; border:1px solid #ddd; text-align:center;">${it.quantity || 1}</td>
+            <td style="padding:6px 8px; border:1px solid #ddd; text-align:right;">${fmtVND(it.unitPrice || 0)}</td>
+            <td style="padding:6px 8px; border:1px solid #ddd; text-align:right;">${fmtVND(it.contractValue)}</td>
           </tr>`;
         });
       });
@@ -3161,8 +3161,6 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
         </table>
         <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:6px;">
           <tr><td style="padding:5px 8px; text-align:right; width:75%;">Tổng theo đơn giá</td><td style="padding:5px 8px; text-align:right; width:25%;">${fmtVND(lineItemsSubtotal)}</td></tr>
-          <tr><td style="padding:5px 8px; text-align:right;">Tổng phát sinh (báo khách)</td><td style="padding:5px 8px; text-align:right;">${fmtVND(lineItemsExtraTotal)}</td></tr>
-          <tr><td style="padding:5px 8px; text-align:right;">Tổng báo khách (chưa VAT)</td><td style="padding:5px 8px; text-align:right;">${fmtVND(billableTotal)}</td></tr>
           <tr><td style="padding:5px 8px; text-align:right;">Thuế VAT (8%)</td><td style="padding:5px 8px; text-align:right;">${fmtVND(vatAmount)}</td></tr>
           <tr><td style="padding:8px; text-align:right; font-weight:700; font-size:15px;">${totalLabel}</td><td style="padding:8px; text-align:right; font-weight:700; font-size:15px;">${fmtVND(clientTotal)}</td></tr>
         </table>
@@ -3372,7 +3370,7 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
             </div>
             <div><div className="mv-detail-label">Ngân sách <span className="mv-row-sub">(tự tính từ bảng chi phí{includeVat ? ", đã gồm VAT" : ""})</span></div><div className="mv-detail-value">{fmtVND(clientTotal)}</div></div>
             <div><div className="mv-detail-label">Thời gian</div><div className="mv-detail-value mv-mono-date">{fmtDate(project.startDate)} → {fmtDate(project.endDate)}</div></div>
-            <div><div className="mv-detail-label">Thực chi / Còn nợ</div><div className="mv-detail-value"><span style={{ color: "#D4A537" }}>{fmtVND(lineItemsActual)}</span> / <span style={{ color: "#C1443C" }}>{fmtVND(lineItemsDebt)}</span></div></div>
+            <div><div className="mv-detail-label">Dự chi / Còn nợ</div><div className="mv-detail-value"><span style={{ color: "#D4A537" }}>{fmtVND(lineItemsActual)}</span> / <span style={{ color: "#C1443C" }}>{fmtVND(lineItemsDebt)}</span></div></div>
           </div>
           {project.description && (
             <div style={{ marginTop: 16 }}>
@@ -3595,10 +3593,11 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
             return (
               <>
               <div className="mv-stats-row mv-stats-row-sm mv-no-print">
-                <StatCard label="Dự chi" value={fmtVND(lineItemsDuChi)} tone="#3FA9A0" />
-                <StatCard label="Thực chi" value={fmtVND(lineItemsThucChi)} tone="#D4A537" />
-                <StatCard label="Theo hợp đồng" value={fmtVND(lineItemsSubtotal)} tone="#5FB77E" />
-                <StatCard label="Còn nợ (Công ty nợ)" value={fmtVND(lineItemsDebt)} tone="#C1443C" />
+                <StatCard label="Dự chi (nội bộ)" value={fmtVND(lineItems.reduce((s, l) => s + l.actualValue, 0))} tone="#D4A537" />
+                <StatCard label="Thực chi (nội bộ)" value={fmtVND(lineItemsThucChiTotal)} tone="#3FA9A0" />
+                <StatCard label="Phát sinh" value={fmtVND(lineItemsExtraTotal)} tone={lineItemsExtraTotal > 0 ? "#C1443C" : undefined} />
+                <StatCard label="Đã thanh toán" value={fmtVND(lineItems.reduce((s, l) => s + (l.paidAmount || 0), 0))} tone="#5FB77E" />
+                <StatCard label="Còn nợ" value={fmtVND(lineItems.reduce((s, l) => s + (l.actualValue - (l.paidAmount || 0)), 0))} tone="#C1443C" />
               </div>
 
               <table className="mv-quote-table">
@@ -3607,7 +3606,7 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
                     <th>Hạng mục</th>
                     <th>SL</th>
                     <th>Đơn giá</th>
-                    <th className="mv-no-print">Theo hợp đồng</th>
+                    <th className="mv-no-print">Phát sinh</th>
                     <th className="mv-no-print">Dự chi</th>
                     <th className="mv-no-print">Thực chi</th>
                     <th className="mv-no-print">Đã TT</th>
@@ -3621,8 +3620,9 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
                       <td colSpan={9}>{group}</td>
                     </tr>
                     {items.map((l) => {
-                      const actual = getLineItemActual(l);
-                      const debt = actual - (l.paidAmount || 0);
+                      const debt = l.actualValue - (l.paidAmount || 0);
+                      const tc = thucChi(l);
+                      const hasReport = employeeActualByLineItem[l.id] !== undefined;
                       return confirmRemove === l.id ? (
                         <tr key={l.id}><td colSpan={9}><ConfirmBar text={`Xoá hạng mục "${l.name}"?`} onConfirm={() => deleteLineItem(l.id)} onCancel={() => setConfirmRemove(null)} /></td></tr>
                       ) : (
@@ -3630,59 +3630,45 @@ function ProjectDetail({ data, persist, projectId, back, sync }) {
                           <td>{l.name}{l.notes && <div className="mv-row-sub">{l.notes}</div>}</td>
                           <td className="mv-mono-date">{l.quantity || 1}</td>
                           <td className="mv-mono-money">{fmtVND(l.unitPrice || 0)}</td>
-                          <td className="mv-mono-money mv-no-print" style={{ color: "#5FB77E" }}>{fmtVND(l.contractValue || 0)}</td>
-                          <td className="mv-mono-money mv-no-print" style={{ color: "#3FA9A0" }}>{fmtVND(l.actualValue || 0)}</td>
-                          <td className="mv-mono-money mv-no-print" style={{ color: "#D4A537" }}>{fmtVND(actual)}</td>
+                          <td className="mv-mono-money mv-no-print" style={{ color: (l.extraAmount || 0) > 0 ? "#C1443C" : undefined }}>{fmtVND(l.extraAmount || 0)}</td>
+                          <td className="mv-mono-money mv-no-print">{fmtVND(l.actualValue)}</td>
+                          <td className="mv-mono-money mv-no-print" style={{ color: hasReport ? "#3FA9A0" : "var(--text-muted)" }} title={hasReport ? "Nhân viên đã báo cáo" : "Chưa có nhân viên báo cáo — lấy theo Dự chi"}>{fmtVND(tc)}</td>
                           <td className="mv-mono-money mv-no-print" style={{ color: "#5FB77E" }}>{fmtVND(l.paidAmount || 0)}</td>
                           <td className="mv-no-print">
-                            {debt > 0 ? <span className="mv-debt-badge">{fmtVND(debt)}</span> : ((l.paidAmount || 0) > 0 && debt <= 0) ? <span className="mv-paid-badge">Đã trả đủ</span> : "0"}
+                            {debt > 0 ? <span className="mv-debt-badge">{fmtVND(debt)}</span> : <span className="mv-paid-badge">Đã trả đủ</span>}
                           </td>
                           <td className="mv-no-print" onClick={(e) => e.stopPropagation()}>
                             <button className="mv-icon-btn" onClick={() => { setEditingLineItem(l); setShowLineItemForm(true); }}><Pencil size={14} /></button>
                             <button className="mv-icon-btn" onClick={() => setConfirmRemove(l.id)}><Trash2 size={14} /></button>
-                            {debt > 0 && <button className="mv-icon-btn" title="Đánh dấu đã trả đủ" onClick={() => markLineItemPaid(l.id, actual)}><CheckCircle2 size={14} /></button>}
+                            {debt > 0 && <button className="mv-icon-btn" title="Đánh dấu đã trả đủ" onClick={() => markLineItemPaid(l.id, l.actualValue)}><CheckCircle2 size={14} /></button>}
                           </td>
                         </tr>
                       );
                     })}
                   </tbody>
                 ))}
-                {customMiscExpenses.length > 0 && (
-                  <tbody>
-                    <tr className="mv-quote-group-row"><td colSpan={9}>Khác / Miscellaneous (Nhân viên nhập)</td></tr>
-                    {customMiscExpenses.map((r) => (
-                      <tr key={r.id}>
-                        <td>{r.line_item_name}</td>
-                        <td className="mv-mono-date">1</td>
-                        <td className="mv-mono-money">0</td>
-                        <td className="mv-mono-money mv-no-print" style={{ color: "#5FB77E" }}>0</td>
-                        <td className="mv-mono-money mv-no-print" style={{ color: "#3FA9A0" }}>0</td>
-                        <td className="mv-mono-money mv-no-print" style={{ color: "#D4A537" }}>{fmtVND(r.amount)}</td>
-                        <td className="mv-mono-money mv-no-print" style={{ color: "#5FB77E" }}>0</td>
-                        <td className="mv-no-print"><span className="mv-debt-badge">{fmtVND(r.amount)}</span></td>
-                        <td className="mv-no-print"></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                )}
                 <tbody className="mv-quote-totals-body">
                   <tr>
                     <td colSpan={3} className="mv-quote-total-label">Tổng theo đơn giá</td>
                     <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(lineItemsSubtotal)}</td>
                     <td colSpan={5} className="mv-no-print"></td>
                   </tr>
-                  <tr>
+                  <tr className="mv-no-print">
                     <td colSpan={3} className="mv-quote-total-label">Tổng phát sinh (báo khách)</td>
                     <td className="mv-quote-amount-cell mv-mono-money" style={{ color: lineItemsExtraTotal > 0 ? "#C1443C" : undefined }}>{fmtVND(lineItemsExtraTotal)}</td>
                     <td colSpan={5} className="mv-no-print"></td>
                   </tr>
                   <tr className="mv-no-print">
-                    <td colSpan={4} className="mv-quote-total-label">Tổng nội bộ (Dự chi / Thực chi)</td>
-                    <td className="mv-mono-money" style={{ fontWeight: 700, color: "#3FA9A0" }}>{fmtVND(lineItemsDuChi)}</td>
-                    <td className="mv-mono-money" style={{ fontWeight: 700, color: "#D4A537" }}>{fmtVND(lineItemsThucChi)}</td>
+                    <td colSpan={5} className="mv-quote-total-label">Tổng dự chi (nội bộ)</td>
+                    <td className="mv-mono-money" style={{ fontWeight: 700, color: "#D4A537" }}>{fmtVND(lineItems.reduce((s, l) => s + l.actualValue, 0))}</td>
                     <td colSpan={3}></td>
                   </tr>
-                  <tr>
+                  <tr className="mv-no-print">
+                    <td colSpan={5} className="mv-quote-total-label">Tổng thực chi (nội bộ)</td>
+                    <td className="mv-mono-money" style={{ fontWeight: 700, color: "#3FA9A0" }}>{fmtVND(lineItemsThucChiTotal)}</td>
+                    <td colSpan={3}></td>
+                  </tr>
+                  <tr className="mv-no-print">
                     <td colSpan={3} className="mv-quote-total-label">Tổng báo khách (chưa VAT)</td>
                     <td className="mv-quote-amount-cell mv-mono-money">{fmtVND(billableTotal)}</td>
                     <td colSpan={5} className="mv-no-print"></td>
@@ -4495,7 +4481,7 @@ function EmployeeApp({ sync }) {
   const [editingMilestone, setEditingMilestone] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null);
   const [myExpenses, setMyExpenses] = useState({}); // project_id -> [rows]
-  const [expenseForm, setExpenseForm] = useState({ lineItemId: "", customName: "", amount: "", date: todayISO(), note: "" });
+  const [expenseForm, setExpenseForm] = useState({ lineItemId: "", amount: "", date: todayISO(), note: "" });
   const [expenseSubmitting, setExpenseSubmitting] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [confirmDeleteExpense, setConfirmDeleteExpense] = useState(null);
@@ -4563,19 +4549,19 @@ function EmployeeApp({ sync }) {
 
   const submitExpense = async () => {
     const client = sync.getClient();
-    if (!client || !activeId || !expenseForm.lineItemId || !expenseForm.amount) return;
-    const isCustom = expenseForm.lineItemId === "custom_misc";
-    if (isCustom && (!expenseForm.customName || !expenseForm.customName.trim())) {
-      alert("Vui lòng nhập tên hạng mục mới.");
-      return;
-    }
+    const isCustom = expenseForm.lineItemId === "__custom__";
+    if (!client || !activeId || !expenseForm.amount) return;
+    if (!isCustom && !expenseForm.lineItemId) return;
+    if (isCustom && !expenseForm.customName?.trim()) return;
     const category = (liveCategories[activeId] || []).find((c) => c.id === expenseForm.lineItemId);
+    const lineItemId = isCustom ? null : expenseForm.lineItemId;
+    const lineItemName = isCustom ? expenseForm.customName.trim() : (category?.name || "");
     setExpenseSubmitting(true);
     try {
       if (editingExpenseId) {
         const { error } = await client.from("expense_reports").update({
-          line_item_id: isCustom ? `misc-${uid()}` : expenseForm.lineItemId,
-          line_item_name: isCustom ? expenseForm.customName.trim() : (category?.name || ""),
+          line_item_id: lineItemId,
+          line_item_name: lineItemName,
           amount: Number(expenseForm.amount) || 0,
           spent_date: expenseForm.date || null,
           note: expenseForm.note,
@@ -4585,8 +4571,8 @@ function EmployeeApp({ sync }) {
       } else {
         const { error } = await client.from("expense_reports").insert({
           project_id: activeId,
-          line_item_id: isCustom ? `misc-${uid()}` : expenseForm.lineItemId,
-          line_item_name: isCustom ? expenseForm.customName.trim() : (category?.name || ""),
+          line_item_id: lineItemId,
+          line_item_name: lineItemName,
           amount: Number(expenseForm.amount) || 0,
           spent_date: expenseForm.date || null,
           note: expenseForm.note,
@@ -4594,7 +4580,7 @@ function EmployeeApp({ sync }) {
         });
         if (error) throw error;
       }
-      setExpenseForm({ lineItemId: "", customName: "", amount: "", date: todayISO(), note: "" });
+      setExpenseForm({ lineItemId: "", amount: "", date: todayISO(), note: "", customName: "" });
       loadAll();
     } catch (e) {
       setLoadError(e.message || "Không gửi được khoản chi.");
@@ -4762,11 +4748,12 @@ function EmployeeApp({ sync }) {
                 grouped.push({ group: c.group, items: categories.filter((x) => x.group === c.group) });
               });
               const myList = myExpenses[activeId] || [];
+              const isCustom = expenseForm.lineItemId === "__custom__";
               return (
                 <div className="mv-panel">
                   <h3 className="mv-panel-title" style={{ marginBottom: 12 }}><Plus size={16} /> {editingExpenseId ? "Sửa khoản chi" : "Báo khoản chi mới"}</h3>
-                  {categories.length === 0 ? (
-                    <p className="mv-empty-note">Chưa có hạng mục nào trong dự án này để báo chi.</p>
+                  {categories.length === 0 && !isCustom ? (
+                    <p className="mv-empty-note">Chưa có hạng mục nào trong dự án này để báo chi. Bạn vẫn có thể <button className="mv-reset-link" style={{ display: "inline" }} onClick={() => setExpenseForm({ ...expenseForm, lineItemId: "__custom__" })}>thêm hạng mục mới (Miscellaneous)</button>.</p>
                   ) : (
                     <>
                       <div className="mv-form-grid">
@@ -4778,24 +4765,24 @@ function EmployeeApp({ sync }) {
                                 {gi.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                               </optgroup>
                             ))}
-                            <optgroup label="Khác">
-                              <option value="custom_misc">— Thêm hạng mục mới (Miscellaneous) —</option>
-                            </optgroup>
+                            <option value="__custom__">+ Hạng mục khác (Miscellaneous)</option>
                           </select>
                         </Field>
-                        {expenseForm.lineItemId === "custom_misc" && (
-                          <Field label="Tên hạng mục mới"><input className="mv-input" value={expenseForm.customName || ""} onChange={(e) => setExpenseForm({ ...expenseForm, customName: e.target.value })} placeholder="VD: Mua thêm thẻ nhớ..." /></Field>
-                        )}
                         <Field label="Số tiền đã chi (VND)"><input type="number" className="mv-input" value={expenseForm.amount} onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value })} /></Field>
                         <Field label="Ngày chi"><input type="date" className="mv-input" value={expenseForm.date} onChange={(e) => setExpenseForm({ ...expenseForm, date: e.target.value })} /></Field>
                       </div>
+                      {isCustom && (
+                        <Field label="Tên hạng mục mới (sẽ nằm trong nhóm Miscellaneous)">
+                          <input className="mv-input" value={expenseForm.customName || ""} onChange={(e) => setExpenseForm({ ...expenseForm, customName: e.target.value })} placeholder="VD: Phí gửi xe đoàn phim" />
+                        </Field>
+                      )}
                       <Field label="Tên khoản chi nhỏ / Ghi chú"><input className="mv-input" value={expenseForm.note} onChange={(e) => setExpenseForm({ ...expenseForm, note: e.target.value })} placeholder="VD: Cọc bối cảnh đợt 1, Thuê thêm đèn..." /></Field>
                       <div style={{ display: "flex", gap: 8 }}>
-                        <button className="mv-btn mv-btn-primary mv-btn-sm" disabled={!expenseForm.lineItemId || !expenseForm.amount || expenseSubmitting} onClick={submitExpense}>
+                        <button className="mv-btn mv-btn-primary mv-btn-sm" disabled={(!isCustom && !expenseForm.lineItemId) || (isCustom && !expenseForm.customName?.trim()) || !expenseForm.amount || expenseSubmitting} onClick={submitExpense}>
                           {expenseSubmitting ? "Đang lưu..." : editingExpenseId ? "Lưu thay đổi" : "Gửi khoản chi"}
                         </button>
                         {editingExpenseId && (
-                          <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => { setEditingExpenseId(null); setExpenseForm({ lineItemId: "", customName: "", amount: "", date: todayISO(), note: "" }); }}>Huỷ sửa</button>
+                          <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => { setEditingExpenseId(null); setExpenseForm({ lineItemId: "", amount: "", date: todayISO(), note: "" }); }}>Huỷ sửa</button>
                         )}
                       </div>
                     </>
@@ -5278,7 +5265,9 @@ const CSS = `
 .mv-calendar-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 4px; }
 .mv-calendar-weekday { text-align: center; font-size: 11px; color: var(--text-muted); font-weight: 600; padding: 4px 0; }
 .mv-calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: minmax(72px, auto); gap: 4px; }
-.mv-month-grid-3 { display: grid; grid-template-columns: 1fr; gap: 18px; }
+.mv-month-grid-3 { display: grid; grid-template-columns: 1fr; gap: 24px; }
+.mv-month-grid-3 .mv-calendar-grid { grid-auto-rows: minmax(88px, auto); }
+.mv-month-grid-3 .mv-calendar-chip { font-size: 11px; padding: 3px 6px; }
 .mv-month-block .mv-calendar-grid { grid-auto-rows: minmax(52px, auto); }
 .mv-month-block .mv-calendar-chip { font-size: 9.5px; padding: 1px 4px; }
 @media (max-width: 1100px) { .mv-month-grid-3 { grid-template-columns: 1fr; } }
@@ -5388,14 +5377,61 @@ const CSS = `
 
 @media (max-width: 860px) {
   .mv-shell { flex-direction: column; }
-  .mv-sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; row-gap: 10px; }
-  .mv-nav { flex-direction: row; }
-  .mv-sidebar-footer { display: flex; width: 100%; order: 3; }
+  .mv-sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; row-gap: 10px; position: static; height: auto; }
+  .mv-nav { flex-direction: row; flex-wrap: wrap; }
+  .mv-sidebar-footer { display: flex; width: 100%; order: 3; flex-wrap: wrap; }
   .mv-dash-grid, .mv-overview-grid, .mv-form-grid { grid-template-columns: 1fr; }
   .mv-stats-row { grid-template-columns: repeat(2, 1fr); }
   .mv-lineitem-cols { grid-template-columns: repeat(2, 1fr); }
   .mv-cashflow-grid { grid-template-columns: repeat(2, 1fr); }
   .mv-stats-row-5 { grid-template-columns: repeat(2, 1fr); }
+
+  body { font-size: 14px; }
+  .mv-panel { padding: 14px; }
+  .mv-panel-head { flex-wrap: wrap; gap: 10px; }
+  .mv-panel-head > div { flex-wrap: wrap; row-gap: 8px; }
+  .mv-toolbar { flex-wrap: wrap; }
+  .mv-toolbar > * { flex: 1 1 auto; min-width: 140px; }
+  .mv-search { min-width: 100%; }
+
+  .mv-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; padding-bottom: 2px; }
+  .mv-tab { white-space: nowrap; flex-shrink: 0; font-size: 12.5px; padding: 8px 10px; }
+
+  .mv-quote-table, .mv-checklist-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
+  .mv-quote-table td, .mv-quote-table th, .mv-checklist-table td, .mv-checklist-table th { white-space: nowrap; }
+
+  .mv-slate-grid { grid-template-columns: 1fr; }
+  .mv-modal { width: 100%; max-width: 100%; border-radius: 12px 12px 0 0; }
+  .mv-modal-overlay { padding: 0; align-items: flex-end; }
+  .mv-modal-wide, .mv-modal-xl { width: 100%; }
+
+  .mv-month-grid-3 { gap: 16px; }
+  .mv-month-block .mv-calendar-grid { grid-auto-rows: minmax(60px, auto); }
+  .mv-calendar-chip { font-size: 9px; }
+
+  .mv-row-card { flex-wrap: wrap; gap: 8px; }
+  .mv-row-card .mv-row-right { width: 100%; justify-content: flex-start; }
+  .mv-assignment-pay { flex-wrap: wrap; width: 100%; }
+
+  .mv-stage-picker { gap: 5px; }
+  .mv-stage-btn { font-size: 10.5px; padding: 5px 9px; }
+
+  .mv-export-menu-wrap, .mv-orientation-toggle { flex-shrink: 0; }
+
+  .mv-employee-shell { padding: 14px; }
+  .mv-employee-header { flex-wrap: wrap; gap: 10px; }
+  .mv-employee-project-list .mv-slate-grid { grid-template-columns: 1fr; }
+  .mv-view-toggle { width: 100%; }
+  .mv-view-toggle button { flex: 1; }
+
+  .mv-form-grid > * { min-width: 0; }
+  .mv-cashflow-chart { height: 170px; }
+}
+
+@media (max-width: 480px) {
+  .mv-stats-row, .mv-stats-row-5, .mv-cashflow-grid { grid-template-columns: 1fr; }
+  .mv-brand-logo { max-width: 90px; }
+  .mv-login-minimal { max-width: 100%; }
 }
 
 @media print {
@@ -5415,17 +5451,25 @@ const CSS = `
   #mv-printable-calendar .mv-print-sub, #mv-printable-lineitems .mv-print-sub, #mv-printable-company-calendar .mv-print-sub { color: #444; }
   #mv-printable-calendar .mv-print-logo, #mv-printable-lineitems .mv-print-logo, #mv-printable-company-calendar .mv-print-logo { filter: invert(1); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
-  #mv-printable-calendar .mv-calendar-title, #mv-printable-company-calendar .mv-calendar-title { color: #111; }
-  #mv-printable-calendar .mv-calendar-weekday, #mv-printable-company-calendar .mv-calendar-weekday { color: #555; }
-  #mv-printable-calendar .mv-calendar-cell, #mv-printable-company-calendar .mv-calendar-cell { border: 1px solid #ccc; background: #fff; break-inside: avoid; }
+  #mv-printable-calendar .mv-calendar-title, #mv-printable-company-calendar .mv-calendar-title { color: #fff; background: #1D1A16; padding: 8px 14px; border-radius: 6px 6px 0 0; display: block; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #mv-printable-calendar .mv-month-block, #mv-printable-company-calendar .mv-month-block { border: 1px solid #ccc; border-radius: 6px; overflow: hidden; margin-bottom: 4px; }
+  #mv-printable-calendar .mv-calendar-head, #mv-printable-company-calendar .mv-calendar-head { margin: 0; }
+  #mv-printable-calendar .mv-calendar-weekdays, #mv-printable-company-calendar .mv-calendar-weekdays { background: #EDE9DE; padding: 4px 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #mv-printable-calendar .mv-calendar-weekday, #mv-printable-company-calendar .mv-calendar-weekday { color: #555; font-weight: 700; }
+  #mv-printable-calendar .mv-calendar-grid, #mv-printable-company-calendar .mv-calendar-grid { gap: 1px; background: #ccc; padding: 1px; }
+  #mv-printable-calendar .mv-calendar-cell, #mv-printable-company-calendar .mv-calendar-cell { border: none; background: #fff; break-inside: avoid; }
+  #mv-printable-calendar .mv-calendar-cell-blank, #mv-printable-company-calendar .mv-calendar-cell-blank { background: #F7F5EF; }
+  #mv-printable-calendar .mv-calendar-cell-today, #mv-printable-company-calendar .mv-calendar-cell-today { background: #FBF3DC !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   #mv-printable-calendar .mv-calendar-cell-shooting, #mv-printable-company-calendar .mv-calendar-cell-shooting { background: #FDE3E0 !important; border-color: #C1443C !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   #mv-printable-calendar .mv-calendar-cell-shooting .mv-calendar-daynum, #mv-printable-company-calendar .mv-calendar-cell-shooting .mv-calendar-daynum { color: #C1443C !important; }
-  #mv-printable-calendar .mv-calendar-daynum, #mv-printable-company-calendar .mv-calendar-daynum { color: #555; }
-  #mv-printable-calendar .mv-calendar-chip, #mv-printable-company-calendar .mv-calendar-chip { color: #111; border-left-width: 3px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #mv-printable-calendar .mv-calendar-daynum, #mv-printable-company-calendar .mv-calendar-daynum { color: #555; font-weight: 600; }
+  #mv-printable-calendar .mv-calendar-chip, #mv-printable-company-calendar .mv-calendar-chip { color: #111; background: #F0EDE4; border-left-width: 3px; border-radius: 3px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
   #mv-printable-lineitems { padding: 8mm; }
-  #mv-printable-lineitems .mv-quote-table th { color: #555; border-bottom: 1px solid #999; }
-  #mv-printable-lineitems .mv-quote-table td { border-bottom: 1px solid #ddd; color: #111; }
+  #mv-printable-lineitems .mv-quote-table { border-collapse: collapse; }
+  #mv-printable-lineitems .mv-quote-table th { color: #333; border: 1px solid #999; background: #E8E4DA; padding: 6px 8px; }
+  #mv-printable-lineitems .mv-quote-table td { border: 1px solid #ccc; color: #111; padding: 6px 8px; }
+  #mv-printable-lineitems .mv-quote-table tbody:nth-of-type(even) tr:not(.mv-quote-group-row) { background: #F4F2EC; }
   #mv-printable-lineitems .mv-quote-total-label { color: #111; }
   #mv-printable-lineitems .mv-quote-group-row td { color: #111; border-bottom: 1px solid #111; }
   #mv-printable-lineitems .mv-quote-total-value { color: #111; font-size: 16px; }
@@ -5452,6 +5496,14 @@ root.render(<App />);
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("./sw.js").catch(() => {});
+    });
+    // Always silently jump to whatever the newest deployed version is —
+    // never show a "reload to update" prompt or version choice to the user.
+    let hasReloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (hasReloaded) return;
+      hasReloaded = true;
+      window.location.reload();
     });
   }
 </script>
